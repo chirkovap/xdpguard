@@ -1,47 +1,63 @@
-# Makefile for XDPGuard eBPF programs
+# XDPGuard BPF Makefile
+# Compiles XDP programs with proper BTF support
 
-LLC ?= llc
 CLANG ?= clang
-CC := gcc
+LLC ?= llc
+ARCH := $(shell uname -m | sed 's/x86_64/x86/' | sed 's/aarch64/arm64/')
 
-KERN_SOURCES = xdp_filter.c
-KERN_OBJECTS = $(KERN_SOURCES:.c=.o)
+# BPF compilation flags with BTF support
+BPF_CFLAGS := -g -O2 -Wall \
+	-target bpf \
+	-D__TARGET_ARCH_$(ARCH) \
+	-I/usr/include \
+	-I/usr/include/$(shell uname -m)-linux-gnu
 
-LINUX_HEADERS = /usr/include
-BPF_CFLAGS = -O2 -Wall -target bpf
-
-# Include paths
-INCLUDES = -I$(LINUX_HEADERS)
+# Targets
+TARGET := xdp_filter.o
+SOURCE := xdp_filter.c
+INSTALL_DIR := /usr/lib/xdpguard
 
 .PHONY: all clean install
 
-all: $(KERN_OBJECTS)
+all: $(TARGET)
+	@echo "✓ XDP program compiled successfully"
+	@echo "  Output: $(TARGET)"
+	@echo "  Size: $$(stat -c%s $(TARGET)) bytes"
 
-%.o: %.c
-	@echo "  CC      $@"
-	$(CLANG) $(BPF_CFLAGS) $(INCLUDES) -c $< -o $@
+$(TARGET): $(SOURCE)
+	@echo "Compiling XDP program..."
+	$(CLANG) $(BPF_CFLAGS) -c $< -o $@
+	@echo "✓ Compilation complete"
+
+install: $(TARGET)
+	@echo "Installing XDP program..."
+	mkdir -p $(INSTALL_DIR)
+	cp $(TARGET) $(INSTALL_DIR)/
+	chmod 644 $(INSTALL_DIR)/$(TARGET)
+	@echo "✓ XDP program installed to $(INSTALL_DIR)/$(TARGET)"
 
 clean:
-	@echo "  CLEAN"
-	rm -f *.o
-	 rm -f *.ll
-
-install: all
-	@echo "  INSTALL XDP programs"
-	mkdir -p /usr/lib/xdpguard
-	cp $(KERN_OBJECTS) /usr/lib/xdpguard/
-	@echo "  Installation complete"
+	@echo "Cleaning build artifacts..."
+	rm -f *.o *.ll
+	@echo "✓ Clean complete"
 
 uninstall:
-	@echo "  UNINSTALL XDP programs"
-	rm -rf /usr/lib/xdpguard
+	@echo "Uninstalling XDP program..."
+	rm -f $(INSTALL_DIR)/$(TARGET)
+	@echo "✓ Uninstall complete"
 
-help:
-	@echo "XDPGuard eBPF Makefile"
-	@echo ""
-	@echo "Targets:"
-	@echo "  all       - Build all eBPF programs (default)"
-	@echo "  clean     - Remove build artifacts"
-	@echo "  install   - Install compiled programs to /usr/lib/xdpguard"
-	@echo "  uninstall - Remove installed programs"
-	@echo "  help      - Show this help message"
+# Helper targets
+check:
+	@echo "Checking dependencies..."
+	@which $(CLANG) > /dev/null || (echo "ERROR: clang not found" && exit 1)
+	@echo "✓ clang found: $$($(CLANG) --version | head -n1)"
+	@test -f $(SOURCE) || (echo "ERROR: $(SOURCE) not found" && exit 1)
+	@echo "✓ Source file: $(SOURCE)"
+
+info:
+	@echo "XDPGuard BPF Makefile"
+	@echo "  Compiler: $(CLANG)"
+	@echo "  Architecture: $(ARCH)"
+	@echo "  Target: $(TARGET)"
+	@echo "  Source: $(SOURCE)"
+	@echo "  Install dir: $(INSTALL_DIR)"
