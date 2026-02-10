@@ -1,0 +1,36 @@
+# XDPGuard Python Dependencies
+
+# Web Framework
+Flask>=3.0.0
+Flask-CORS>=4.0.0
+
+# Configuration
+PyYAML>=6.0
+
+# CLI Tools
+click>=8.1.0
+
+# HTTP Client
+requests>=2.31.0
+
+# BPF/XDP (requires system packages)
+# python3-bcc (install via apt/yum)
+# bpfcc-tools (install via apt/yum)
+
+# Database
+# sqlite3 (built-in)
+
+# System utilities
+psutil>=5.9.0
+
+# Logging
+coloredlogs>=15.0
+
+# Data validation
+marshmallow>=3.20.0
+
+# Async support
+gevent>=23.9.0
+
+# Security
+werkzeug>=3.0.0

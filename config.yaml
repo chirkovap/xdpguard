@@ -1,0 +1,109 @@
+# XDPGuard Configuration File
+
+network:
+  # Network interface to protect (eth0, ens3, etc.)
+  interface: eth0
+  
+  # Mode: router or bridge
+  mode: router
+  
+  # WAN interface (for router mode)
+  wan_interface: eth0
+  
+  # LAN interface (for router mode)
+  lan_interface: eth1
+  
+  # Protected ports (apply DDoS protection)
+  protected_ports:
+    - 80
+    - 443
+    - 22
+
+protection:
+  # Enable/disable DDoS protection
+  enabled: true
+  
+  # SYN flood protection
+  syn_rate: 30          # SYN packets per second per IP
+  syn_burst: 50         # Burst size for SYN packets
+  
+  # Connection rate limiting
+  conn_rate: 100        # New connections per second per IP
+  conn_burst: 200       # Burst size for new connections
+  
+  # UDP flood protection
+  udp_rate: 50          # UDP packets per second per IP
+  udp_burst: 100        # Burst size for UDP packets
+  
+  # ICMP flood protection
+  icmp_rate: 10         # ICMP packets per second per IP
+  icmp_burst: 20        # Burst size for ICMP packets
+  
+  # IP Blacklist settings
+  blacklist:
+    enabled: true
+    auto_block_threshold: 1000  # Packets/sec to auto-block
+    block_duration: 3600        # Seconds (1 hour)
+  
+  # IP Whitelist (never block these IPs)
+  whitelist_ips:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 127.0.0.1/8
+
+web:
+  # Web panel settings
+  host: 0.0.0.0
+  port: 8080
+  
+  # Secret key for sessions (CHANGE THIS!)
+  secret_key: "change-this-to-random-secret-key-before-production"
+  
+  # Enable/disable authentication
+  auth_enabled: false
+  username: admin
+  password: changeme
+
+logging:
+  # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: INFO
+  
+  # Log file path
+  file: /var/log/xdpguard.log
+  
+  # Log rotation
+  max_size: 10485760    # 10 MB
+  backup_count: 5
+
+database:
+  # Statistics database path
+  path: /var/lib/xdpguard/stats.db
+
+monitoring:
+  # Statistics collection interval (seconds)
+  stats_interval: 5
+  
+  # Traffic history retention (hours)
+  history_retention: 168  # 7 days
+
+alerts:
+  # Enable alerts
+  enabled: false
+  
+  # Telegram bot settings
+  telegram:
+    enabled: false
+    bot_token: "YOUR_BOT_TOKEN"
+    chat_id: "YOUR_CHAT_ID"
+  
+  # Email alerts
+  email:
+    enabled: false
+    smtp_server: smtp.gmail.com
+    smtp_port: 587
+    username: your_email@gmail.com
+    password: your_password
+    from_addr: your_email@gmail.com
+    to_addrs:
+      - admin@example.com
