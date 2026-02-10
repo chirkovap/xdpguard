@@ -33,6 +33,7 @@
   - libbpf
   - Python 3.8+
   - iproute2
+  - bpftool
 - **Память:** минимум 2 GB RAM
 - **Root права** для загрузки XDP программ
 
@@ -46,7 +47,7 @@ git clone https://github.com/chirkovap/xdpguard.git
 cd xdpguard
 
 # Запустите установочный скрипт
-sudo ./scripts/install.sh
+sudo bash scripts/install.sh
 
 # Настройте конфигурацию
 sudo nano /etc/xdpguard/config.yaml
@@ -64,11 +65,11 @@ sudo systemctl status xdpguard
 
 # Ubuntu/Debian
 sudo apt update
-sudo apt install -y python3 python3-pip clang llvm libelf-dev libbpf-dev make git curl iproute2
+sudo apt install -y python3 python3-pip clang llvm libelf-dev libbpf-dev make git curl iproute2 linux-tools-common
 sudo apt install -y python3-flask python3-yaml python3-click python3-requests python3-psutil
 
 # CentOS/RHEL/Fedora
-sudo yum install -y python3 python3-pip clang llvm elfutils-libelf-devel libbpf-devel make git curl iproute
+sudo yum install -y python3 python3-pip clang llvm elfutils-libelf-devel libbpf-devel make git curl iproute bpftool
 sudo yum install -y python3-flask python3-pyyaml python3-click python3-requests python3-psutil
 
 # 2. Клонируйте репозиторий
@@ -217,11 +218,16 @@ sudo bpftool prog show
 
 # 4. Проверьте BPF карты
 sudo bpftool map show
+# Должны быть карты: blacklist, rate_limit, stats_map
 
-# 5. Проверьте веб-интерфейс
+# 5. Проверьте статистику вручную
+sudo bpftool map dump name stats_map
+# Должны быть ненулевые значения packets_total при наличии трафика
+
+# 6. Проверьте веб-интерфейс
 curl http://localhost:8080/api/status
 
-# 6. Проверьте статистику
+# 7. Проверьте сеть
 sudo bpftool net show
 ```
 
@@ -289,12 +295,44 @@ sudo firewall-cmd --add-port=8080/tcp --permanent
 sudo firewall-cmd --reload
 ```
 
+### Статистика показывает 0
+
+```bash
+# Проверьте что XDP загружен
+sudo bpftool prog show | grep xdp
+
+# Проверьте статистику напрямую из BPF карты
+sudo bpftool map dump name stats_map
+
+# Должны быть ненулевые значения на одном из CPU
+# Если есть - обновите код до последней версии:
+cd /opt/xdpguard
+sudo git pull origin main
+sudo rm -rf python/__pycache__
+sudo systemctl restart xdpguard
+```
+
+### Блокировка IP не работает
+
+```bash
+# Проверьте карту blacklist
+sudo bpftool map show | grep blacklist
+
+# Попробуйте добавить IP вручную
+sudo bpftool map update name blacklist key hex c0 a8 01 64 value hex 01
+# (для IP 192.168.1.100: c0=192, a8=168, 01=1, 64=100)
+
+# Проверьте что IP добавлен
+sudo bpftool map dump name blacklist
+```
+
 ## 📚 Документация
 
 - [Архитектура системы](docs/architecture.md)
 - [Руководство по настройке](docs/configuration.md)
 - [API документация](docs/api.md)
 - [Разработка и вклад](CONTRIBUTING.md)
+- [Быстрый старт](QUICKSTART.md)
 
 ## 🤝 Вклад в проект
 
