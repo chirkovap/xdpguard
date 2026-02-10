@@ -160,14 +160,23 @@ class XDPManager:
                     'bytes_dropped': 0
                 }
                 
-                if data and len(data) > 0:
-                    for cpu_data in data[0].get('values', []):
-                        value = cpu_data.get('value', {})
-                        total_stats['packets_total'] += value.get('packets_total', 0)
-                        total_stats['packets_dropped'] += value.get('packets_dropped', 0)
-                        total_stats['packets_passed'] += value.get('packets_passed', 0)
-                        total_stats['bytes_total'] += value.get('bytes_total', 0)
-                        total_stats['bytes_dropped'] += value.get('bytes_dropped', 0)
+                # data is a list with one element containing key/values
+                if data and isinstance(data, list) and len(data) > 0:
+                    entry = data[0]
+                    # Check if entry is a dict and has 'values' key
+                    if isinstance(entry, dict) and 'values' in entry:
+                        values = entry['values']
+                        
+                        # Iterate through per-CPU values
+                        for cpu_data in values:
+                            if isinstance(cpu_data, dict) and 'value' in cpu_data:
+                                value = cpu_data['value']
+                                if isinstance(value, dict):
+                                    total_stats['packets_total'] += value.get('packets_total', 0)
+                                    total_stats['packets_dropped'] += value.get('packets_dropped', 0)
+                                    total_stats['packets_passed'] += value.get('packets_passed', 0)
+                                    total_stats['bytes_total'] += value.get('bytes_total', 0)
+                                    total_stats['bytes_dropped'] += value.get('bytes_dropped', 0)
                 
                 return total_stats
             else:
