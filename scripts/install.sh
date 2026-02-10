@@ -1,20 +1,19 @@
 #!/bin/bash
 
 # XDPGuard Installation Script
-# Supports: Ubuntu 20.04+, Debian 11+, CentOS 8+, RHEL 8+
+# Installs XDP/eBPF DDoS protection system
 
 set -e
 
 echo ""
-echo "=========================================="
-echo "  XDPGuard Installation Script"
-echo "  High-Performance DDoS Protection"
-echo "=========================================="
+echo "======================================"
+echo "   XDPGuard Installation Script"
+echo "======================================"
 echo ""
 
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then
-    echo "Please run as root (use sudo)"
+    echo "ERROR: Please run as root (use sudo)"
     exit 1
 fi
 
@@ -23,15 +22,15 @@ if [ -f /etc/os-release ]; then
     . /etc/os-release
     OS=$ID
 else
-    echo "Cannot detect OS"
+    echo "ERROR: Cannot detect operating system"
     exit 1
 fi
 
-echo "Detected OS: $OS"
+echo "[1/7] Detected OS: $OS"
 echo ""
 
 # Install dependencies
-echo "[1/6] Installing dependencies..."
+echo "[2/7] Installing system dependencies..."
 if [ "$OS" = "ubuntu" ] || [ "$OS" = "debian" ]; then
     apt-get update
     apt-get install -y \
@@ -47,7 +46,7 @@ if [ "$OS" = "ubuntu" ] || [ "$OS" = "debian" ]; then
         make \
         git \
         curl
-elif [ "$OS" = "centos" ] || [ "$OS" = "rhel" ]; then
+elif [ "$OS" = "centos" ] || [ "$OS" = "rhel" ] || [ "$OS" = "fedora" ]; then
     yum install -y \
         python3-pip \
         clang \
@@ -61,7 +60,8 @@ elif [ "$OS" = "centos" ] || [ "$OS" = "rhel" ]; then
         git \
         curl
 else
-    echo "Unsupported OS: $OS"
+    echo "ERROR: Unsupported OS: $OS"
+    echo "Supported: Ubuntu, Debian, CentOS, RHEL, Fedora"
     exit 1
 fi
 
@@ -69,13 +69,23 @@ echo "✓ Dependencies installed"
 echo ""
 
 # Install Python dependencies
-echo "[2/6] Installing Python dependencies..."
+echo "[3/7] Installing Python dependencies..."
 pip3 install -r requirements.txt
-echo "✓ Python dependencies installed"
+echo "✓ Python packages installed"
+echo ""
+
+# Compile XDP programs
+echo "[4/7] Compiling XDP/eBPF programs..."
+cd bpf
+make clean
+make
+sudo make install
+cd ..
+echo "✓ XDP programs compiled and installed"
 echo ""
 
 # Create directories
-echo "[3/6] Creating directories..."
+echo "[5/7] Creating system directories..."
 mkdir -p /etc/xdpguard
 mkdir -p /var/lib/xdpguard
 mkdir -p /var/log
@@ -84,47 +94,46 @@ echo "✓ Directories created"
 echo ""
 
 # Install files
-echo "[4/6] Installing files..."
+echo "[6/7] Installing XDPGuard files..."
 cp config.yaml /etc/xdpguard/
 cp -r python /opt/xdpguard/
 cp -r web /opt/xdpguard/
 cp daemon.py /opt/xdpguard/
-cp systemd/xdpguard.service /etc/systemd/system/
 chmod +x /opt/xdpguard/daemon.py
+
+# Install systemd service
+cp systemd/xdpguard.service /etc/systemd/system/
 echo "✓ Files installed"
 echo ""
 
 # Setup systemd service
-echo "[5/6] Setting up systemd service..."
+echo "[7/7] Setting up systemd service..."
 systemctl daemon-reload
 systemctl enable xdpguard
-echo "✓ Systemd service configured"
+echo "✓ Service enabled"
 echo ""
 
-# Create CLI symlink
-echo "[6/6] Creating CLI command..."
-ln -sf /opt/xdpguard/python/cli.py /usr/local/bin/xdpguard
-chmod +x /opt/xdpguard/python/cli.py
-echo "✓ CLI command created"
-echo ""
-
-echo "=========================================="
-echo "  Installation Complete!"
-echo "=========================================="
+echo "======================================"
+echo "   Installation Complete!"
+echo "======================================"
 echo ""
 echo "Next steps:"
-echo "  1. Edit config: nano /etc/xdpguard/config.yaml"
-echo "  2. Set your network interface (eth0, ens3, etc.)"
-echo "  3. Start service: systemctl start xdpguard"
-echo "  4. Check status: systemctl status xdpguard"
-echo "  5. Open web panel: http://your-ip:8080"
 echo ""
-echo "CLI Commands:"
-echo "  xdpguard status         - Show system status"
-echo "  xdpguard block <ip>     - Block an IP"
-echo "  xdpguard unblock <ip>   - Unblock an IP"
-echo "  xdpguard list-blocked   - List blocked IPs"
+echo "1. Edit configuration:"
+echo "   nano /etc/xdpguard/config.yaml"
 echo ""
-echo "Logs: /var/log/xdpguard.log"
-echo "Config: /etc/xdpguard/config.yaml"
+echo "2. Set your network interface (eth0, ens3, etc.)"
 echo ""
+echo "3. Start the service:"
+echo "   systemctl start xdpguard"
+echo ""
+echo "4. Check status:"
+echo "   systemctl status xdpguard"
+echo ""
+echo "5. View logs:"
+echo "   journalctl -u xdpguard -f"
+echo ""
+echo "6. Open web panel:"
+echo "   http://your-server-ip:8080"
+echo ""
+echo "======================================"

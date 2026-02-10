@@ -1,17 +1,21 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>XDPGuard - Control Panel</title>
+    <title>XDPGuard Dashboard - DDoS Protection</title>
     
     <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <style>
+        body {
+            background-color: #f8f9fa;
+        }
         .stat-card {
             border-left: 4px solid #007bff;
             transition: transform 0.2s;
@@ -29,7 +33,7 @@
         .stat-card.warning {
             border-left-color: #ffc107;
         }
-        #blocked-ips-table {
+        .blocked-ips-table {
             max-height: 400px;
             overflow-y: auto;
         }
@@ -37,12 +41,12 @@
             font-weight: bold;
             font-size: 1.5rem;
         }
-        .badge-pulse {
+        .status-badge {
             animation: pulse 2s infinite;
         }
         @keyframes pulse {
             0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
+            50% { opacity: 0.7; }
         }
     </style>
 </head>
@@ -51,9 +55,11 @@
     <nav class="navbar navbar-dark bg-dark">
         <div class="container-fluid">
             <span class="navbar-brand mb-0 h1">
-                🛡️ XDPGuard Control Panel
+                <i class="fas fa-shield-alt"></i> XDPGuard Control Panel
             </span>
-            <span class="badge bg-success badge-pulse" id="status-badge">XDP Active</span>
+            <span class="badge bg-success status-badge" id="status-badge">
+                <i class="fas fa-check-circle"></i> XDP Active
+            </span>
         </div>
     </nav>
 
@@ -63,72 +69,87 @@
             <div class="col-md-3">
                 <div class="card stat-card">
                     <div class="card-body">
-                        <h6 class="card-subtitle mb-2 text-muted">Total Packets</h6>
-                        <h3 class="card-title" id="stat-total">0</h3>
+                        <h6 class="card-subtitle mb-2 text-muted">
+                            <i class="fas fa-network-wired"></i> Total Packets
+                        </h6>
+                        <h3 class="card-title" id="packets-total">0</h3>
                     </div>
                 </div>
             </div>
             <div class="col-md-3">
                 <div class="card stat-card danger">
                     <div class="card-body">
-                        <h6 class="card-subtitle mb-2 text-muted">Dropped Packets</h6>
-                        <h3 class="card-title text-danger" id="stat-dropped">0</h3>
+                        <h6 class="card-subtitle mb-2 text-muted">
+                            <i class="fas fa-times-circle"></i> Dropped
+                        </h6>
+                        <h3 class="card-title text-danger" id="packets-dropped">0</h3>
                     </div>
                 </div>
             </div>
             <div class="col-md-3">
                 <div class="card stat-card success">
                     <div class="card-body">
-                        <h6 class="card-subtitle mb-2 text-muted">Passed Packets</h6>
-                        <h3 class="card-title text-success" id="stat-passed">0</h3>
+                        <h6 class="card-subtitle mb-2 text-muted">
+                            <i class="fas fa-check-circle"></i> Passed
+                        </h6>
+                        <h3 class="card-title text-success" id="packets-passed">0</h3>
                     </div>
                 </div>
             </div>
             <div class="col-md-3">
                 <div class="card stat-card warning">
                     <div class="card-body">
-                        <h6 class="card-subtitle mb-2 text-muted">Blocked IPs</h6>
-                        <h3 class="card-title text-warning" id="stat-blocked">0</h3>
+                        <h6 class="card-subtitle mb-2 text-muted">
+                            <i class="fas fa-ban"></i> Blocked IPs
+                        </h6>
+                        <h3 class="card-title text-warning" id="blocked-count">0</h3>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Performance Stats -->
+        <!-- Throughput Stats -->
         <div class="row mb-4">
-            <div class="col-md-12">
+            <div class="col-md-6">
                 <div class="card">
-                    <div class="card-header">
-                        <h5>📊 Performance Metrics</h5>
-                    </div>
                     <div class="card-body">
-                        <div class="row">
-                            <div class="col-md-6">
-                                <p>Packets/sec: <strong id="pps">0</strong></p>
-                                <p>Throughput: <strong id="throughput">0 Mbps</strong></p>
-                            </div>
-                            <div class="col-md-6">
-                                <p>Interface: <strong id="interface">eth0</strong></p>
-                                <p>Drop Rate: <strong id="drop-rate">0%</strong></p>
-                            </div>
-                        </div>
+                        <h6 class="card-subtitle mb-2 text-muted">
+                            <i class="fas fa-tachometer-alt"></i> Throughput
+                        </h6>
+                        <h4 id="throughput">0 Mbps</h4>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-body">
+                        <h6 class="card-subtitle mb-2 text-muted">
+                            <i class="fas fa-chart-line"></i> Drop Rate
+                        </h6>
+                        <h4 id="drop-rate">0%</h4>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- IP Management -->
+        <!-- IP Management and Actions -->
         <div class="row mb-4">
             <div class="col-md-6">
                 <div class="card">
                     <div class="card-header">
-                        <h5>🚫 Manual IP Blocking</h5>
+                        <h5><i class="fas fa-ban"></i> Block IP Address</h5>
                     </div>
                     <div class="card-body">
-                        <div class="input-group">
-                            <input type="text" class="form-control" id="ip-input" placeholder="192.168.1.100">
-                            <button class="btn btn-danger" onclick="blockIP()">Block</button>
-                            <button class="btn btn-success" onclick="unblockIP()">Unblock</button>
+                        <div class="input-group mb-3">
+                            <input type="text" class="form-control" id="ip-input" 
+                                   placeholder="192.168.1.100" 
+                                   pattern="\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}">
+                            <button class="btn btn-danger" onclick="blockIP()">
+                                <i class="fas fa-ban"></i> Block
+                            </button>
+                            <button class="btn btn-success" onclick="unblockIP()">
+                                <i class="fas fa-check"></i> Unblock
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -136,12 +157,18 @@
             <div class="col-md-6">
                 <div class="card">
                     <div class="card-header">
-                        <h5>⚙️ Quick Actions</h5>
+                        <h5><i class="fas fa-tools"></i> Quick Actions</h5>
                     </div>
                     <div class="card-body">
-                        <button class="btn btn-primary" onclick="refreshStats()">🔄 Refresh Stats</button>
-                        <button class="btn btn-warning" onclick="clearStats()">🧹 Clear Stats</button>
-                        <button class="btn btn-info" onclick="exportData()">💾 Export Data</button>
+                        <button class="btn btn-primary me-2" onclick="refreshStats()">
+                            <i class="fas fa-sync"></i> Refresh Stats
+                        </button>
+                        <button class="btn btn-warning me-2" onclick="clearRateLimits()">
+                            <i class="fas fa-eraser"></i> Clear Rate Limits
+                        </button>
+                        <button class="btn btn-info" onclick="exportData()">
+                            <i class="fas fa-download"></i> Export Data
+                        </button>
                     </div>
                 </div>
             </div>
@@ -152,22 +179,20 @@
             <div class="col-12">
                 <div class="card">
                     <div class="card-header">
-                        <h5>🔒 Recently Blocked IPs</h5>
+                        <h5><i class="fas fa-list"></i> Blocked IP Addresses</h5>
                     </div>
-                    <div class="card-body" id="blocked-ips-table">
-                        <table class="table table-striped">
-                            <thead>
+                    <div class="card-body blocked-ips-table">
+                        <table class="table table-striped table-hover">
+                            <thead class="table-dark">
                                 <tr>
-                                    <th>IP Address</th>
-                                    <th>Reason</th>
-                                    <th>Blocked At</th>
-                                    <th>Packets Dropped</th>
-                                    <th>Actions</th>
+                                    <th><i class="fas fa-hashtag"></i> #</th>
+                                    <th><i class="fas fa-network-wired"></i> IP Address</th>
+                                    <th><i class="fas fa-cog"></i> Actions</th>
                                 </tr>
                             </thead>
                             <tbody id="blocked-table-body">
                                 <tr>
-                                    <td colspan="5" class="text-center">Loading...</td>
+                                    <td colspan="3" class="text-center">Loading...</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -180,9 +205,12 @@
     <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     
+    <!-- Custom JavaScript -->
     <script>
         // Auto-refresh every 2 seconds
         setInterval(refreshStats, 2000);
+        
+        // Initial load
         refreshStats();
         loadBlockedIPs();
 
@@ -190,22 +218,27 @@
             fetch('/api/status')
                 .then(res => res.json())
                 .then(data => {
-                    // Update stats cards
-                    document.getElementById('stat-total').textContent = data.stats.packets_total.toLocaleString();
-                    document.getElementById('stat-dropped').textContent = data.stats.packets_dropped.toLocaleString();
-                    document.getElementById('stat-passed').textContent = data.stats.packets_passed.toLocaleString();
-                    document.getElementById('stat-blocked').textContent = data.blocked_count;
+                    // Update statistics
+                    document.getElementById('packets-total').textContent = 
+                        (data.stats.packets_total || 0).toLocaleString();
+                    document.getElementById('packets-dropped').textContent = 
+                        (data.stats.packets_dropped || 0).toLocaleString();
+                    document.getElementById('packets-passed').textContent = 
+                        (data.stats.packets_passed || 0).toLocaleString();
+                    document.getElementById('blocked-count').textContent = 
+                        data.blocked_count || 0;
                     
-                    // Update interface
-                    document.getElementById('interface').textContent = data.interface;
+                    // Calculate throughput (bytes to Mbps)
+                    const mbps = ((data.stats.bytes_total || 0) * 8 / 1000000).toFixed(2);
+                    document.getElementById('throughput').textContent = mbps + ' Mbps';
                     
                     // Calculate drop rate
-                    const dropRate = data.stats.packets_total > 0 
-                        ? (data.stats.packets_dropped / data.stats.packets_total * 100).toFixed(2)
-                        : 0;
+                    const total = data.stats.packets_total || 1;
+                    const dropped = data.stats.packets_dropped || 0;
+                    const dropRate = ((dropped / total) * 100).toFixed(2);
                     document.getElementById('drop-rate').textContent = dropRate + '%';
                 })
-                .catch(err => console.error('Error fetching stats:', err));
+                .catch(err => console.error('Failed to fetch stats:', err));
         }
 
         function loadBlockedIPs() {
@@ -215,106 +248,128 @@
                     const tbody = document.getElementById('blocked-table-body');
                     tbody.innerHTML = '';
                     
-                    if (data.length === 0) {
-                        tbody.innerHTML = '<tr><td colspan="5" class="text-center">No blocked IPs</td></tr>';
+                    if (!data.blocked_ips || data.blocked_ips.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="3" class="text-center">No blocked IPs</td></tr>';
                         return;
                     }
                     
-                    data.forEach(item => {
+                    data.blocked_ips.forEach((ip, index) => {
                         const row = `
                             <tr>
-                                <td><code>${item.ip}</code></td>
-                                <td><span class="badge bg-warning">${item.reason}</span></td>
-                                <td>${item.blocked_at}</td>
-                                <td>${item.packets_dropped}</td>
+                                <td>${index + 1}</td>
+                                <td><code>${ip}</code></td>
                                 <td>
-                                    <button class="btn btn-sm btn-success" onclick="unblockIPDirect('${item.ip}')">Unblock</button>
+                                    <button class="btn btn-sm btn-success" onclick="unblockIPDirect('${ip}')">
+                                        <i class="fas fa-check"></i> Unblock
+                                    </button>
                                 </td>
                             </tr>
                         `;
                         tbody.innerHTML += row;
                     });
                 })
-                .catch(err => console.error('Error loading blocked IPs:', err));
+                .catch(err => console.error('Failed to load blocked IPs:', err));
         }
 
         function blockIP() {
             const ip = document.getElementById('ip-input').value;
-            if (!ip) return alert('Enter IP address');
+            if (!ip) {
+                alert('Please enter an IP address');
+                return;
+            }
             
             fetch('/api/block', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ip: ip})
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ip: ip })
             })
             .then(res => res.json())
             .then(data => {
                 if (data.success) {
-                    alert(`IP blocked: ${ip}`);
+                    alert(`IP ${ip} blocked successfully`);
                     document.getElementById('ip-input').value = '';
                     refreshStats();
                     loadBlockedIPs();
                 } else {
-                    alert('Failed to block IP');
+                    alert('Failed to block IP: ' + (data.error || 'Unknown error'));
                 }
+            })
+            .catch(err => {
+                console.error('Error:', err);
+                alert('Failed to block IP');
             });
         }
 
         function unblockIP() {
             const ip = document.getElementById('ip-input').value;
-            if (!ip) return alert('Enter IP address');
+            if (!ip) {
+                alert('Please enter an IP address');
+                return;
+            }
             
-            fetch('/api/unblock', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ip: ip})
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.success) {
-                    alert(`IP unblocked: ${ip}`);
-                    document.getElementById('ip-input').value = '';
-                    refreshStats();
-                    loadBlockedIPs();
-                } else {
-                    alert('Failed to unblock IP');
-                }
-            });
+            unblockIPDirect(ip);
         }
 
         function unblockIPDirect(ip) {
             fetch('/api/unblock', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ip: ip})
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ip: ip })
             })
             .then(res => res.json())
             .then(data => {
                 if (data.success) {
-                    alert(`IP unblocked: ${ip}`);
+                    alert(`IP ${ip} unblocked successfully`);
+                    document.getElementById('ip-input').value = '';
                     refreshStats();
                     loadBlockedIPs();
+                } else {
+                    alert('Failed to unblock IP: ' + (data.error || 'Unknown error'));
                 }
+            })
+            .catch(err => {
+                console.error('Error:', err);
+                alert('Failed to unblock IP');
             });
         }
 
-        function clearStats() {
-            if (!confirm('Clear all statistics?')) return;
+        function clearRateLimits() {
+            if (!confirm('Clear all rate limit counters?')) {
+                return;
+            }
             
-            fetch('/api/clear-stats', {
-                method: 'POST'
+            fetch('/api/clear-rate-limits', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
             })
             .then(res => res.json())
             .then(data => {
                 if (data.success) {
-                    alert('Statistics cleared');
+                    alert('Rate limits cleared');
                     refreshStats();
+                } else {
+                    alert('Failed to clear rate limits');
                 }
+            })
+            .catch(err => {
+                console.error('Error:', err);
+                alert('Failed to clear rate limits');
             });
         }
 
         function exportData() {
-            window.open('/api/traffic?hours=24', '_blank');
+            fetch('/api/status')
+                .then(res => res.json())
+                .then(data => {
+                    const dataStr = JSON.stringify(data, null, 2);
+                    const dataBlob = new Blob([dataStr], {type: 'application/json'});
+                    const url = URL.createObjectURL(dataBlob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = 'xdpguard-stats-' + new Date().toISOString() + '.json';
+                    link.click();
+                })
+                .catch(err => console.error('Export failed:', err));
         }
     </script>
 </body>

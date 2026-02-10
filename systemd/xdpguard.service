@@ -19,8 +19,8 @@ StandardError=journal
 NoNewPrivileges=false
 PrivateTmp=true
 
-# Capabilities (XDP requires NET_ADMIN)
-AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_ADMIN
+# Resource limits
+LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
