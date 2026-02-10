@@ -1,8 +1,20 @@
 # XDPGuard Configuration File
+#
+# This file configures the XDP-based DDoS protection system
+# Edit values carefully and restart service after changes: systemctl restart xdpguard
 
+# ===== Network Configuration =====
 network:
-  # Network interface to protect (eth0, ens3, etc.)
+  # Network interface to protect (eth0, ens33, ens3, etc.)
+  # Find your interface: ip link show
   interface: eth0
+  
+  # XDP loading mode:
+  #   xdpgeneric - Generic/SKB mode (most compatible, slower)
+  #   xdpdrv     - Native driver mode (fast, requires driver support)
+  #   xdpoffload - Hardware offload (fastest, requires NIC support)
+  # Recommended: xdpgeneric for compatibility
+  xdp_mode: xdpgeneric
   
   # Mode: router or bridge
   mode: router
@@ -15,95 +27,148 @@ network:
   
   # Protected ports (apply DDoS protection)
   protected_ports:
-    - 80
-    - 443
-    - 22
+    - 80    # HTTP
+    - 443   # HTTPS
+    - 22    # SSH
 
+# ===== XDP Program Settings =====
+xdp:
+  # Path to compiled XDP object file
+  object_path: /usr/lib/xdpguard/xdp_filter.o
+  
+  # Auto-reload on failure
+  auto_reload: true
+
+# ===== DDoS Protection Settings =====
 protection:
   # Enable/disable DDoS protection
   enabled: true
   
   # SYN flood protection
-  syn_rate: 30          # SYN packets per second per IP
-  syn_burst: 50         # Burst size for SYN packets
+  # Limits number of SYN packets per second per IP
+  syn_rate: 30        # SYN packets per second per IP
+  syn_burst: 50       # Burst size for SYN packets
   
   # Connection rate limiting
-  conn_rate: 100        # New connections per second per IP
-  conn_burst: 200       # Burst size for new connections
+  # Limits new connections per second per IP
+  conn_rate: 100      # New connections per second per IP
+  conn_burst: 200     # Burst size for new connections
   
   # UDP flood protection
-  udp_rate: 50          # UDP packets per second per IP
-  udp_burst: 100        # Burst size for UDP packets
+  # Limits UDP packets per second per IP
+  udp_rate: 50        # UDP packets per second per IP
+  udp_burst: 100      # Burst size for UDP packets
   
   # ICMP flood protection
-  icmp_rate: 10         # ICMP packets per second per IP
-  icmp_burst: 20        # Burst size for ICMP packets
-  
-  # IP Blacklist settings
-  blacklist:
-    enabled: true
-    auto_block_threshold: 1000  # Packets/sec to auto-block
-    block_duration: 3600        # Seconds (1 hour)
-  
-  # IP Whitelist (never block these IPs)
-  whitelist_ips:
-    - 10.0.0.0/8
-    - 172.16.0.0/12
-    - 192.168.0.0/16
-    - 127.0.0.1/8
+  # Limits ICMP packets per second per IP
+  icmp_rate: 10       # ICMP packets per second per IP
+  icmp_burst: 20      # Burst size for ICMP packets
 
+# ===== IP Blacklist Settings =====
+blacklist:
+  # Enable automatic blacklisting
+  enabled: true
+  
+  # Threshold for automatic blocking (packets/sec)
+  auto_block_threshold: 1000  # Packets/sec to auto-block
+  
+  # Block duration in seconds (3600 = 1 hour)
+  block_duration: 3600        # Seconds (1 hour)
+  
+  # Maximum blacklist size
+  max_entries: 10000
+
+# ===== IP Whitelist =====
+# IPs that are never blocked
+whitelist_ips:
+  - 127.0.0.1
+  - ::1
+  # Add your trusted IPs here:
+  # - 192.168.1.0/24
+  # - 10.0.0.5
+
+# ===== Web Dashboard Settings =====
 web:
-  # Web panel settings
+  # Web interface host (0.0.0.0 = all interfaces, 127.0.0.1 = localhost only)
   host: 0.0.0.0
+  
+  # Web interface port
   port: 8080
   
-  # Secret key for sessions (CHANGE THIS!)
-  secret_key: "change-this-to-random-secret-key-before-production"
+  # Secret key for session management (change this!)
+  secret_key: change-this-secret-key-in-production
   
-  # Enable/disable authentication
-  auth_enabled: false
-  username: admin
-  password: changeme
+  # Enable debug mode (DO NOT use in production)
+  debug: false
 
+# ===== Logging Settings =====
 logging:
-  # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
   level: INFO
   
   # Log file path
   file: /var/log/xdpguard.log
   
   # Log rotation
-  max_size: 10485760    # 10 MB
+  max_size: 10485760  # 10 MB
   backup_count: 5
-
-database:
-  # Statistics database path
-  path: /var/lib/xdpguard/stats.db
-
-monitoring:
-  # Statistics collection interval (seconds)
-  stats_interval: 5
   
-  # Traffic history retention (hours)
-  history_retention: 168  # 7 days
+  # Log format
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 
-alerts:
-  # Enable alerts
+# ===== Statistics Settings =====
+stats:
+  # Enable statistics collection
+  enabled: true
+  
+  # Statistics update interval (seconds)
+  update_interval: 5
+  
+  # Keep statistics for (seconds)
+  retention: 86400  # 24 hours
+
+# ===== Alerting Settings =====
+alerting:
+  # Enable alerting
   enabled: false
   
-  # Telegram bot settings
-  telegram:
-    enabled: false
-    bot_token: "YOUR_BOT_TOKEN"
-    chat_id: "YOUR_CHAT_ID"
+  # Alert methods
+  methods:
+    # Email alerts
+    email:
+      enabled: false
+      smtp_server: smtp.gmail.com
+      smtp_port: 587
+      username: your-email@gmail.com
+      password: your-password
+      from: xdpguard@yourdomain.com
+      to:
+        - admin@yourdomain.com
+    
+    # Telegram alerts
+    telegram:
+      enabled: false
+      bot_token: YOUR_BOT_TOKEN
+      chat_id: YOUR_CHAT_ID
+    
+    # Webhook alerts
+    webhook:
+      enabled: false
+      url: https://your-webhook-url.com/alert
+      method: POST
   
-  # Email alerts
-  email:
-    enabled: false
-    smtp_server: smtp.gmail.com
-    smtp_port: 587
-    username: your_email@gmail.com
-    password: your_password
-    from_addr: your_email@gmail.com
-    to_addrs:
-      - admin@example.com
+  # Alert conditions
+  conditions:
+    # Alert when packets/sec exceeds threshold
+    high_traffic:
+      enabled: true
+      threshold: 10000  # packets/sec
+    
+    # Alert when new IP is blocked
+    ip_blocked:
+      enabled: true
+    
+    # Alert when drop rate exceeds threshold
+    high_drop_rate:
+      enabled: true
+      threshold: 50  # percent
