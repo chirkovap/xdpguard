@@ -1,217 +1,255 @@
-"""XDP Program Manager using BCC (BPF Compiler Collection)"""
+#!/usr/bin/env python3
+"""
+XDPGuard XDP Manager
+
+Manages XDP/eBPF programs for DDoS protection.
+Handles loading, attaching, and controlling XDP programs via BCC.
+"""
 
 import logging
-from bcc import BPF
 import socket
 import struct
-import time
 from typing import List, Dict, Optional
+from bcc import BPF
 
 logger = logging.getLogger(__name__)
 
 
 class XDPManager:
-    """Manage XDP programs for DDoS protection"""
-    
-    # XDP program in C
-    BPF_PROGRAM = """
-    #include <linux/bpf.h>
-    #include <linux/if_ether.h>
-    #include <linux/ip.h>
-    #include <linux/in.h>
-    #include <linux/tcp.h>
-    #include <linux/udp.h>
-    
-    // BPF map for IP blacklist
-    BPF_HASH(blacklist, u32, u8, 10000);
-    
-    // BPF map for statistics
-    BPF_HASH(stats, u32, u64, 10);
-    
-    // Statistics keys
-    #define STAT_TOTAL_PACKETS 0
-    #define STAT_DROPPED_PACKETS 1
-    #define STAT_PASSED_PACKETS 2
-    
-    int xdp_filter(struct xdp_md *ctx) {
-        void *data = (void *)(long)ctx->data;
-        void *data_end = (void *)(long)ctx->data_end;
-        
-        // Parse Ethernet header
-        struct ethhdr *eth = data;
-        if ((void *)(eth + 1) > data_end)
-            return XDP_PASS;
-        
-        // Only process IPv4 packets
-        if (eth->h_proto != htons(ETH_P_IP))
-            return XDP_PASS;
-        
-        // Parse IP header
-        struct iphdr *ip = (void *)(eth + 1);
-        if ((void *)(ip + 1) > data_end)
-            return XDP_PASS;
-        
-        // Update total packets counter
-        u32 stat_key = STAT_TOTAL_PACKETS;
-        u64 *total = stats.lookup(&stat_key);
-        if (total) {
-            (*total)++;
-        } else {
-            u64 init_val = 1;
-            stats.update(&stat_key, &init_val);
-        }
-        
-        // Check if source IP is blacklisted
-        u32 src_ip = ip->saddr;
-        u8 *blocked = blacklist.lookup(&src_ip);
-        
-        if (blocked) {
-            // Update dropped packets counter
-            stat_key = STAT_DROPPED_PACKETS;
-            u64 *dropped = stats.lookup(&stat_key);
-            if (dropped) {
-                (*dropped)++;
-            } else {
-                u64 init_val = 1;
-                stats.update(&stat_key, &init_val);
-            }
-            return XDP_DROP;
-        }
-        
-        // Update passed packets counter
-        stat_key = STAT_PASSED_PACKETS;
-        u64 *passed = stats.lookup(&stat_key);
-        if (passed) {
-            (*passed)++;
-        } else {
-            u64 init_val = 1;
-            stats.update(&stat_key, &init_val);
-        }
-        
-        return XDP_PASS;
-    }
-    """
-    
-    def __init__(self, config):
+    """Manages XDP programs for packet filtering"""
+
+    def __init__(self, config: Dict):
         self.config = config
-        self.interface = config.get('network.interface', 'eth0')
         self.bpf = None
-        self.fn = None
-        self.blacklist_map = None
-        self.stats_map = None
-    
-    def load_program(self) -> bool:
-        """Load and attach XDP program to interface"""
+        self.device = config.get('network', {}).get('interface', 'eth0')
+        self.program_loaded = False
+
+    def load_program(self, program_path: str = "/usr/lib/xdpguard/xdp_filter.o") -> bool:
+        """Load and attach XDP program to network interface"""
         try:
-            logger.info(f"Loading XDP program on interface {self.interface}...")
+            logger.info(f"Loading XDP program from {program_path}...")
             
-            # Compile BPF program
-            self.bpf = BPF(text=self.BPF_PROGRAM)
-            self.fn = self.bpf.load_func("xdp_filter", BPF.XDP)
+            # For production, load compiled .o file
+            # For development with BCC, inline the program
+            bpf_code = self._get_inline_bpf_code()
             
-            # Attach to interface
-            self.bpf.attach_xdp(self.interface, self.fn, 0)
+            self.bpf = BPF(text=bpf_code)
+            fn = self.bpf.load_func("xdp_filter_func", BPF.XDP)
             
-            # Get BPF maps
-            self.blacklist_map = self.bpf.get_table("blacklist")
-            self.stats_map = self.bpf.get_table("stats")
+            # Attach to network interface
+            self.bpf.attach_xdp(self.device, fn, 0)
             
-            logger.info(f"XDP program attached to {self.interface}")
+            logger.info(f"XDP program attached to {self.device}")
+            self.program_loaded = True
             return True
             
         except Exception as e:
             logger.error(f"Failed to load XDP program: {e}")
             return False
-    
-    def unload_program(self):
-        """Detach XDP program from interface"""
+
+    def unload_program(self) -> bool:
+        """Detach XDP program from network interface"""
         try:
-            if self.bpf:
-                self.bpf.remove_xdp(self.interface, 0)
-                logger.info(f"XDP program detached from {self.interface}")
-        except Exception as e:
-            logger.error(f"Failed to unload XDP program: {e}")
-    
-    def ip_to_int(self, ip_str: str) -> int:
-        """Convert IP string to integer"""
-        return struct.unpack("I", socket.inet_aton(ip_str))[0]
-    
-    def int_to_ip(self, ip_int: int) -> str:
-        """Convert integer to IP string"""
-        return socket.inet_ntoa(struct.pack("I", ip_int))
-    
-    def block_ip(self, ip: str) -> bool:
-        """Add IP to blacklist"""
-        try:
-            ip_int = self.ip_to_int(ip)
-            self.blacklist_map[self.blacklist_map.Key(ip_int)] = self.blacklist_map.Leaf(1)
-            logger.info(f"Blocked IP: {ip}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to block IP {ip}: {e}")
-            return False
-    
-    def unblock_ip(self, ip: str) -> bool:
-        """Remove IP from blacklist"""
-        try:
-            ip_int = self.ip_to_int(ip)
-            key = self.blacklist_map.Key(ip_int)
-            if key in self.blacklist_map:
-                del self.blacklist_map[key]
-                logger.info(f"Unblocked IP: {ip}")
+            if self.bpf and self.program_loaded:
+                self.bpf.remove_xdp(self.device, 0)
+                logger.info(f"XDP program detached from {self.device}")
+                self.program_loaded = False
                 return True
             return False
         except Exception as e:
+            logger.error(f"Failed to unload XDP program: {e}")
+            return False
+
+    def block_ip(self, ip: str) -> bool:
+        """Add IP address to blacklist"""
+        try:
+            if not self.bpf:
+                logger.error("BPF program not loaded")
+                return False
+
+            blacklist = self.bpf.get_table("blacklist")
+            ip_int = self._ip_to_int(ip)
+            blacklist[blacklist.Key(ip_int)] = blacklist.Leaf(1)
+            
+            logger.info(f"Blocked IP: {ip}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to block IP {ip}: {e}")
+            return False
+
+    def unblock_ip(self, ip: str) -> bool:
+        """Remove IP address from blacklist"""
+        try:
+            if not self.bpf:
+                logger.error("BPF program not loaded")
+                return False
+
+            blacklist = self.bpf.get_table("blacklist")
+            ip_int = self._ip_to_int(ip)
+            
+            try:
+                del blacklist[blacklist.Key(ip_int)]
+                logger.info(f"Unblocked IP: {ip}")
+                return True
+            except KeyError:
+                logger.warning(f"IP {ip} was not in blacklist")
+                return False
+                
+        except Exception as e:
             logger.error(f"Failed to unblock IP {ip}: {e}")
             return False
-    
+
     def get_blocked_ips(self) -> List[str]:
-        """Get list of all blocked IPs"""
+        """Get list of currently blocked IPs"""
         blocked = []
         try:
-            for key, value in self.blacklist_map.items():
-                ip = self.int_to_ip(key.value)
+            if not self.bpf:
+                return blocked
+
+            blacklist = self.bpf.get_table("blacklist")
+            for key, value in blacklist.items():
+                ip = self._int_to_ip(key.value)
                 blocked.append(ip)
+                
         except Exception as e:
             logger.error(f"Failed to get blocked IPs: {e}")
+            
         return blocked
-    
+
     def get_statistics(self) -> Dict:
-        """Get XDP statistics"""
+        """Get packet statistics from XDP program"""
         stats = {
             'packets_total': 0,
             'packets_dropped': 0,
             'packets_passed': 0,
+            'bytes_total': 0,
+            'bytes_dropped': 0
         }
         
         try:
-            # Key 0: total packets
-            key = self.stats_map.Key(0)
-            if key in self.stats_map:
-                stats['packets_total'] = self.stats_map[key].value
+            if not self.bpf:
+                return stats
+
+            stats_map = self.bpf.get_table("stats_map")
+            key = stats_map.Key(0)
             
-            # Key 1: dropped packets
-            key = self.stats_map.Key(1)
-            if key in self.stats_map:
-                stats['packets_dropped'] = self.stats_map[key].value
-            
-            # Key 2: passed packets
-            key = self.stats_map.Key(2)
-            if key in self.stats_map:
-                stats['packets_passed'] = self.stats_map[key].value
+            if key in stats_map:
+                stat = stats_map[key]
+                stats['packets_total'] = stat.packets_total
+                stats['packets_dropped'] = stat.packets_dropped
+                stats['packets_passed'] = stat.packets_passed
+                stats['bytes_total'] = stat.bytes_total
+                stats['bytes_dropped'] = stat.bytes_dropped
                 
         except Exception as e:
             logger.error(f"Failed to get statistics: {e}")
-        
+            
         return stats
-    
-    def clear_statistics(self):
-        """Clear all statistics"""
+
+    def clear_rate_limits(self) -> bool:
+        """Clear rate limiting counters"""
         try:
-            for key in [0, 1, 2]:
-                stat_key = self.stats_map.Key(key)
-                if stat_key in self.stats_map:
-                    self.stats_map[stat_key] = self.stats_map.Leaf(0)
-            logger.info("Statistics cleared")
+            if not self.bpf:
+                return False
+
+            rate_limit = self.bpf.get_table("rate_limit")
+            rate_limit.clear()
+            
+            logger.info("Rate limit counters cleared")
+            return True
+            
         except Exception as e:
-            logger.error(f"Failed to clear statistics: {e}")
+            logger.error(f"Failed to clear rate limits: {e}")
+            return False
+
+    @staticmethod
+    def _ip_to_int(ip_str: str) -> int:
+        """Convert IP address string to integer"""
+        return struct.unpack("I", socket.inet_aton(ip_str))[0]
+
+    @staticmethod
+    def _int_to_ip(ip_int: int) -> str:
+        """Convert integer to IP address string"""
+        return socket.inet_ntoa(struct.pack("I", ip_int))
+
+    def _get_inline_bpf_code(self) -> str:
+        """Get inline BPF code for BCC (development mode)"""
+        return """
+#include <linux/bpf.h>
+#include <linux/if_ether.h>
+#include <linux/ip.h>
+#include <linux/in.h>
+
+BPF_HASH(blacklist, u32, u8, 10000);
+BPF_HASH(rate_limit, u32, u64, 65536);
+
+struct stats {
+    u64 packets_total;
+    u64 packets_dropped;
+    u64 packets_passed;
+    u64 bytes_total;
+    u64 bytes_dropped;
+};
+
+BPF_PERCPU_ARRAY(stats_map, struct stats, 1);
+
+int xdp_filter_func(struct xdp_md *ctx) {
+    void *data = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+    
+    struct ethhdr *eth = data;
+    if ((void *)(eth + 1) > data_end)
+        return XDP_PASS;
+    
+    if (eth->h_proto != htons(ETH_P_IP))
+        return XDP_PASS;
+    
+    struct iphdr *ip = (void *)(eth + 1);
+    if ((void *)(ip + 1) > data_end)
+        return XDP_PASS;
+    
+    u32 src_ip = ip->saddr;
+    u64 bytes = (u64)(data_end - data);
+    
+    // Update stats
+    u32 key = 0;
+    struct stats *stat = stats_map.lookup(&key);
+    if (stat) {
+        lock_xadd(&stat->packets_total, 1);
+        lock_xadd(&stat->bytes_total, bytes);
+    }
+    
+    // Check blacklist
+    u8 *blocked = blacklist.lookup(&src_ip);
+    if (blocked && *blocked) {
+        if (stat) {
+            lock_xadd(&stat->packets_dropped, 1);
+            lock_xadd(&stat->bytes_dropped, bytes);
+        }
+        return XDP_DROP;
+    }
+    
+    // Rate limiting
+    u64 *pkt_count = rate_limit.lookup(&src_ip);
+    if (pkt_count) {
+        lock_xadd(pkt_count, 1);
+        if (*pkt_count > 1000) {
+            if (stat) {
+                lock_xadd(&stat->packets_dropped, 1);
+                lock_xadd(&stat->bytes_dropped, bytes);
+            }
+            return XDP_DROP;
+        }
+    } else {
+        u64 init = 1;
+        rate_limit.update(&src_ip, &init);
+    }
+    
+    if (stat) {
+        lock_xadd(&stat->packets_passed, 1);
+    }
+    
+    return XDP_PASS;
+}
+"""

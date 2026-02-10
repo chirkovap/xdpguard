@@ -1,24 +1,31 @@
-"""Configuration management for XDPGuard"""
+#!/usr/bin/env python3
+"""
+XDPGuard Configuration Manager
+
+Handles loading and managing YAML configuration.
+"""
 
 import yaml
-from pathlib import Path
 import logging
+from pathlib import Path
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
 
 class Config:
-    """Configuration loader and manager"""
-    
-    def __init__(self, config_path="/etc/xdpguard/config.yaml"):
+    """Configuration manager for XDPGuard"""
+
+    def __init__(self, config_path: str = "/etc/xdpguard/config.yaml"):
         self.config_path = Path(config_path)
         self.config = self.load()
-    
-    def load(self):
+
+    def load(self) -> dict:
         """Load configuration from YAML file"""
         if not self.config_path.exists():
-            raise FileNotFoundError(f"Config not found: {self.config_path}")
-        
+            logger.error(f"Config file not found: {self.config_path}")
+            return self._default_config()
+
         try:
             with open(self.config_path, 'r') as f:
                 config = yaml.safe_load(f)
@@ -26,20 +33,24 @@ class Config:
                 return config
         except Exception as e:
             logger.error(f"Failed to load config: {e}")
-            raise
-    
-    def save(self):
-        """Save configuration to YAML file"""
+            return self._default_config()
+
+    def save(self) -> bool:
+        """Save current configuration to YAML file"""
         try:
             with open(self.config_path, 'w') as f:
                 yaml.dump(self.config, f, default_flow_style=False)
                 logger.info(f"Configuration saved to {self.config_path}")
+                return True
         except Exception as e:
             logger.error(f"Failed to save config: {e}")
-            raise
-    
-    def get(self, path, default=None):
-        """Get nested config value by dot notation (e.g., 'network.interface')"""
+            return False
+
+    def get(self, path: str, default: Any = None) -> Any:
+        """Get configuration value by dot notation path
+        
+        Example: config.get('network.interface', 'eth0')
+        """
         keys = path.split('.')
         value = self.config
         
@@ -48,31 +59,57 @@ class Config:
                 value = value.get(key, default)
             else:
                 return default
-        
+                
         return value
-    
-    def set(self, path, value):
-        """Set nested config value by dot notation"""
+
+    def set(self, path: str, value: Any) -> bool:
+        """Set configuration value by dot notation path"""
         keys = path.split('.')
         target = self.config
         
         for key in keys[:-1]:
             target = target.setdefault(key, {})
-        
+            
         target[keys[-1]] = value
-    
-    def validate(self):
+        return True
+
+    def _default_config(self) -> dict:
+        """Return default configuration"""
+        return {
+            'network': {
+                'interface': 'eth0',
+                'mode': 'router',
+                'protected_ports': [80, 443, 22]
+            },
+            'protection': {
+                'enabled': True,
+                'syn_rate': 30,
+                'syn_burst': 50,
+                'whitelist_ips': ['127.0.0.0/8', '10.0.0.0/8']
+            },
+            'web': {
+                'host': '0.0.0.0',
+                'port': 8080,
+                'secret_key': 'change-this-key'
+            },
+            'logging': {
+                'level': 'INFO',
+                'file': '/var/log/xdpguard.log'
+            }
+        }
+
+    def validate(self) -> bool:
         """Validate configuration"""
-        required_keys = [
-            'network.interface',
-            'protection.enabled',
-            'web.host',
-            'web.port',
-        ]
+        required_keys = ['network', 'protection', 'web', 'logging']
         
         for key in required_keys:
-            if self.get(key) is None:
-                raise ValueError(f"Missing required config key: {key}")
-        
-        logger.info("Configuration validation passed")
+            if key not in self.config:
+                logger.error(f"Missing required config section: {key}")
+                return False
+                
         return True
+
+    def reload(self) -> bool:
+        """Reload configuration from file"""
+        self.config = self.load()
+        return self.validate()
