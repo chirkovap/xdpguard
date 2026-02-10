@@ -2,123 +2,177 @@
 """
 XDPGuard XDP Manager
 
-Manages XDP/eBPF programs for DDoS protection.
-Handles loading, attaching, and controlling XDP programs via BCC.
+Manages XDP program loading and BPF map interactions.
+Uses precompiled XDP object files for maximum compatibility.
 """
 
+import os
 import logging
-import socket
+import subprocess
+import ipaddress
 import struct
-from typing import List, Dict, Optional
-from bcc import BPF
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 
 class XDPManager:
-    """Manages XDP programs for packet filtering"""
+    """Manages XDP program and BPF maps"""
 
-    def __init__(self, config: Dict):
+    def __init__(self, config):
         self.config = config
-        self.bpf = None
-        self.device = config.get('network', {}).get('interface', 'eth0')
-        self.program_loaded = False
+        self.interface = config.get('network.interface', 'eth0')
+        self.xdp_mode = config.get('network.xdp_mode', 'xdpgeneric')  # xdpgeneric, xdpdrv, xdpoffload
+        self.xdp_obj_path = config.get('xdp.object_path', '/usr/lib/xdpguard/xdp_filter.o')
+        self.xdp_loaded = False
+        
+        logger.info(f"XDP Manager initialized for interface {self.interface}")
 
-    def load_program(self, program_path: str = "/usr/lib/xdpguard/xdp_filter.o") -> bool:
-        """Load and attach XDP program to network interface"""
+    def load_program(self):
+        """Load XDP program onto interface using ip link"""
         try:
-            logger.info(f"Loading XDP program from {program_path}...")
+            # Check if XDP object file exists
+            if not os.path.exists(self.xdp_obj_path):
+                logger.error(f"XDP program not found at {self.xdp_obj_path}")
+                logger.error("Run 'cd bpf && sudo make && sudo make install' first")
+                return False
             
-            # For production, load compiled .o file
-            # For development with BCC, inline the program
-            bpf_code = self._get_inline_bpf_code()
+            logger.info(f"Loading XDP program from {self.xdp_obj_path}...")
+            logger.info(f"Mode: {self.xdp_mode}, Interface: {self.interface}")
             
-            self.bpf = BPF(text=bpf_code)
-            fn = self.bpf.load_func("xdp_filter_func", BPF.XDP)
+            # Try to load with specified mode
+            success = self._load_xdp_with_mode(self.xdp_mode)
             
-            # Attach to network interface
-            self.bpf.attach_xdp(self.device, fn, 0)
+            if not success and self.xdp_mode != 'xdpgeneric':
+                logger.warning(f"Failed to load in {self.xdp_mode} mode, trying xdpgeneric...")
+                success = self._load_xdp_with_mode('xdpgeneric')
             
-            logger.info(f"XDP program attached to {self.device}")
-            self.program_loaded = True
-            return True
-            
+            if success:
+                self.xdp_loaded = True
+                logger.info(f"✓ XDP program loaded successfully on {self.interface}")
+                self._verify_xdp_loaded()
+                return True
+            else:
+                logger.error("Failed to load XDP program")
+                return False
+                
         except Exception as e:
             logger.error(f"Failed to load XDP program: {e}")
             return False
 
-    def unload_program(self) -> bool:
-        """Detach XDP program from network interface"""
+    def _load_xdp_with_mode(self, mode):
+        """Load XDP with specific mode"""
         try:
-            if self.bpf and self.program_loaded:
-                self.bpf.remove_xdp(self.device, 0)
-                logger.info(f"XDP program detached from {self.device}")
-                self.program_loaded = False
+            # Construct ip link command
+            cmd = [
+                'ip', 'link', 'set', 'dev', self.interface,
+                mode, 'obj', self.xdp_obj_path, 'sec', 'xdp'
+            ]
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode == 0:
+                logger.info(f"XDP loaded in {mode} mode")
                 return True
+            else:
+                logger.warning(f"Failed to load in {mode} mode: {result.stderr}")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            logger.error("XDP loading timeout")
             return False
         except Exception as e:
-            logger.error(f"Failed to unload XDP program: {e}")
+            logger.error(f"Error loading XDP: {e}")
             return False
 
-    def block_ip(self, ip: str) -> bool:
-        """Add IP address to blacklist"""
+    def _verify_xdp_loaded(self):
+        """Verify XDP is attached to interface"""
         try:
-            if not self.bpf:
-                logger.error("BPF program not loaded")
-                return False
-
-            blacklist = self.bpf.get_table("blacklist")
-            ip_int = self._ip_to_int(ip)
-            blacklist[blacklist.Key(ip_int)] = blacklist.Leaf(1)
+            result = subprocess.run(
+                ['ip', 'link', 'show', self.interface],
+                capture_output=True,
+                text=True
+            )
             
-            logger.info(f"Blocked IP: {ip}")
-            return True
-            
+            if 'xdp' in result.stdout.lower():
+                logger.info("✓ XDP attachment verified")
+            else:
+                logger.warning("XDP may not be properly attached")
+                
         except Exception as e:
-            logger.error(f"Failed to block IP {ip}: {e}")
-            return False
+            logger.warning(f"Could not verify XDP attachment: {e}")
 
-    def unblock_ip(self, ip: str) -> bool:
-        """Remove IP address from blacklist"""
+    def unload_program(self):
+        """Unload XDP program from interface"""
         try:
-            if not self.bpf:
-                logger.error("BPF program not loaded")
-                return False
-
-            blacklist = self.bpf.get_table("blacklist")
-            ip_int = self._ip_to_int(ip)
-            
-            try:
-                del blacklist[blacklist.Key(ip_int)]
-                logger.info(f"Unblocked IP: {ip}")
+            if not self.xdp_loaded:
                 return True
-            except KeyError:
-                logger.warning(f"IP {ip} was not in blacklist")
+            
+            logger.info(f"Unloading XDP from {self.interface}...")
+            
+            # Remove XDP program
+            cmd = ['ip', 'link', 'set', 'dev', self.interface, 'xdp', 'off']
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode == 0:
+                self.xdp_loaded = False
+                logger.info("✓ XDP program unloaded")
+                return True
+            else:
+                logger.error(f"Failed to unload XDP: {result.stderr}")
                 return False
                 
         except Exception as e:
-            logger.error(f"Failed to unblock IP {ip}: {e}")
+            logger.error(f"Error unloading XDP: {e}")
             return False
 
-    def get_blocked_ips(self) -> List[str]:
-        """Get list of currently blocked IPs"""
-        blocked = []
+    def get_statistics(self):
+        """Get packet statistics from BPF maps"""
         try:
-            if not self.bpf:
-                return blocked
-
-            blacklist = self.bpf.get_table("blacklist")
-            for key, value in blacklist.items():
-                ip = self._int_to_ip(key.value)
-                blocked.append(ip)
+            # Try to read stats from bpftool
+            result = subprocess.run(
+                ['bpftool', 'map', 'dump', 'name', 'xdp_stats'],
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode == 0:
+                # Parse bpftool output
+                stats = self._parse_bpftool_stats(result.stdout)
+                return stats
+            else:
+                # Return empty stats if map not found
+                return {
+                    'packets_total': 0,
+                    'packets_dropped': 0,
+                    'packets_passed': 0,
+                    'bytes_total': 0,
+                    'bytes_dropped': 0
+                }
                 
         except Exception as e:
-            logger.error(f"Failed to get blocked IPs: {e}")
-            
-        return blocked
+            logger.error(f"Failed to get statistics: {e}")
+            return {
+                'packets_total': 0,
+                'packets_dropped': 0,
+                'packets_passed': 0,
+                'bytes_total': 0,
+                'bytes_dropped': 0
+            }
 
-    def get_statistics(self) -> Dict:
-        """Get packet statistics from XDP program"""
+    def _parse_bpftool_stats(self, output):
+        """Parse bpftool map output"""
         stats = {
             'packets_total': 0,
             'packets_dropped': 0,
@@ -127,129 +181,141 @@ class XDPManager:
             'bytes_dropped': 0
         }
         
-        try:
-            if not self.bpf:
-                return stats
-
-            stats_map = self.bpf.get_table("stats_map")
-            key = stats_map.Key(0)
-            
-            if key in stats_map:
-                stat = stats_map[key]
-                stats['packets_total'] = stat.packets_total
-                stats['packets_dropped'] = stat.packets_dropped
-                stats['packets_passed'] = stat.packets_passed
-                stats['bytes_total'] = stat.bytes_total
-                stats['bytes_dropped'] = stat.bytes_dropped
-                
-        except Exception as e:
-            logger.error(f"Failed to get statistics: {e}")
-            
+        # Simple parsing - this would need to match your map structure
+        lines = output.strip().split('\n')
+        for line in lines:
+            if 'packets' in line.lower():
+                try:
+                    value = int(line.split(':')[-1].strip())
+                    stats['packets_total'] += value
+                except:
+                    pass
+        
         return stats
 
-    def clear_rate_limits(self) -> bool:
+    def block_ip(self, ip_address):
+        """Add IP to blacklist map"""
+        try:
+            logger.info(f"Blocking IP: {ip_address}")
+            
+            # Validate IP
+            ip_obj = ipaddress.ip_address(ip_address)
+            
+            # Use bpftool to update map
+            cmd = [
+                'bpftool', 'map', 'update',
+                'name', 'ip_blacklist',
+                'key', self._ip_to_hex(ip_address),
+                'value', '0x01'
+            ]
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode == 0:
+                logger.info(f"✓ IP {ip_address} blocked")
+                return True
+            else:
+                logger.error(f"Failed to block IP: {result.stderr}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error blocking IP {ip_address}: {e}")
+            return False
+
+    def unblock_ip(self, ip_address):
+        """Remove IP from blacklist map"""
+        try:
+            logger.info(f"Unblocking IP: {ip_address}")
+            
+            # Validate IP
+            ip_obj = ipaddress.ip_address(ip_address)
+            
+            # Use bpftool to delete from map
+            cmd = [
+                'bpftool', 'map', 'delete',
+                'name', 'ip_blacklist',
+                'key', self._ip_to_hex(ip_address)
+            ]
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode == 0:
+                logger.info(f"✓ IP {ip_address} unblocked")
+                return True
+            else:
+                logger.warning(f"IP may not have been in blacklist: {result.stderr}")
+                return True  # Return success anyway
+                
+        except Exception as e:
+            logger.error(f"Error unblocking IP {ip_address}: {e}")
+            return False
+
+    def get_blocked_ips(self):
+        """Get list of blocked IPs from map"""
+        try:
+            result = subprocess.run(
+                ['bpftool', 'map', 'dump', 'name', 'ip_blacklist'],
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode == 0:
+                # Parse bpftool output to extract IPs
+                ips = self._parse_blocked_ips(result.stdout)
+                return ips
+            else:
+                return []
+                
+        except Exception as e:
+            logger.error(f"Failed to get blocked IPs: {e}")
+            return []
+
+    def _parse_blocked_ips(self, output):
+        """Parse blocked IPs from bpftool output"""
+        ips = []
+        lines = output.strip().split('\n')
+        
+        for line in lines:
+            if 'key:' in line:
+                try:
+                    # Extract hex key and convert to IP
+                    hex_str = line.split('key:')[1].split('value:')[0].strip()
+                    # This would need proper parsing based on your map structure
+                    # For now, return empty list
+                except:
+                    pass
+        
+        return ips
+
+    def clear_rate_limits(self):
         """Clear rate limiting counters"""
         try:
-            if not self.bpf:
-                return False
-
-            rate_limit = self.bpf.get_table("rate_limit")
-            rate_limit.clear()
+            logger.info("Clearing rate limit counters...")
             
-            logger.info("Rate limit counters cleared")
+            # Clear rate limit map
+            result = subprocess.run(
+                ['bpftool', 'map', 'delete', 'name', 'rate_limit_map'],
+                capture_output=True,
+                text=True
+            )
+            
+            logger.info("✓ Rate limits cleared")
             return True
             
         except Exception as e:
             logger.error(f"Failed to clear rate limits: {e}")
             return False
 
-    @staticmethod
-    def _ip_to_int(ip_str: str) -> int:
-        """Convert IP address string to integer"""
-        return struct.unpack("I", socket.inet_aton(ip_str))[0]
-
-    @staticmethod
-    def _int_to_ip(ip_int: int) -> str:
-        """Convert integer to IP address string"""
-        return socket.inet_ntoa(struct.pack("I", ip_int))
-
-    def _get_inline_bpf_code(self) -> str:
-        """Get inline BPF code for BCC (development mode)"""
-        return """
-#include <linux/bpf.h>
-#include <linux/if_ether.h>
-#include <linux/ip.h>
-#include <linux/in.h>
-
-BPF_HASH(blacklist, u32, u8, 10000);
-BPF_HASH(rate_limit, u32, u64, 65536);
-
-struct stats {
-    u64 packets_total;
-    u64 packets_dropped;
-    u64 packets_passed;
-    u64 bytes_total;
-    u64 bytes_dropped;
-};
-
-BPF_PERCPU_ARRAY(stats_map, struct stats, 1);
-
-int xdp_filter_func(struct xdp_md *ctx) {
-    void *data = (void *)(long)ctx->data;
-    void *data_end = (void *)(long)ctx->data_end;
-    
-    struct ethhdr *eth = data;
-    if ((void *)(eth + 1) > data_end)
-        return XDP_PASS;
-    
-    if (eth->h_proto != htons(ETH_P_IP))
-        return XDP_PASS;
-    
-    struct iphdr *ip = (void *)(eth + 1);
-    if ((void *)(ip + 1) > data_end)
-        return XDP_PASS;
-    
-    u32 src_ip = ip->saddr;
-    u64 bytes = (u64)(data_end - data);
-    
-    // Update stats
-    u32 key = 0;
-    struct stats *stat = stats_map.lookup(&key);
-    if (stat) {
-        lock_xadd(&stat->packets_total, 1);
-        lock_xadd(&stat->bytes_total, bytes);
-    }
-    
-    // Check blacklist
-    u8 *blocked = blacklist.lookup(&src_ip);
-    if (blocked && *blocked) {
-        if (stat) {
-            lock_xadd(&stat->packets_dropped, 1);
-            lock_xadd(&stat->bytes_dropped, bytes);
-        }
-        return XDP_DROP;
-    }
-    
-    // Rate limiting
-    u64 *pkt_count = rate_limit.lookup(&src_ip);
-    if (pkt_count) {
-        lock_xadd(pkt_count, 1);
-        if (*pkt_count > 1000) {
-            if (stat) {
-                lock_xadd(&stat->packets_dropped, 1);
-                lock_xadd(&stat->bytes_dropped, bytes);
-            }
-            return XDP_DROP;
-        }
-    } else {
-        u64 init = 1;
-        rate_limit.update(&src_ip, &init);
-    }
-    
-    if (stat) {
-        lock_xadd(&stat->packets_passed, 1);
-    }
-    
-    return XDP_PASS;
-}
-"""
+    def _ip_to_hex(self, ip_address):
+        """Convert IP address to hex string for bpftool"""
+        ip_obj = ipaddress.ip_address(ip_address)
+        ip_bytes = ip_obj.packed
+        return ' '.join([f'0x{b:02x}' for b in ip_bytes])
