@@ -5,25 +5,27 @@
 
 # ===== Network Configuration =====
 network:
-  # Network interface to protect (eth0, ens33, ens3, etc.)
+  # Network interface to protect
+  # IMPORTANT: Change this to your actual interface!
   # Find your interface: ip link show
+  # Common interfaces: eth0, ens33, ens3, enp0s3, wlan0
   interface: eth0
   
   # XDP loading mode:
   #   xdpgeneric - Generic/SKB mode (most compatible, slower)
   #   xdpdrv     - Native driver mode (fast, requires driver support)
   #   xdpoffload - Hardware offload (fastest, requires NIC support)
-  # Recommended: xdpgeneric for compatibility
+  # Recommended: start with xdpgeneric for compatibility
   xdp_mode: xdpgeneric
   
   # Mode: router or bridge
   mode: router
   
-  # WAN interface (for router mode)
+  # WAN interface (for router mode) - should match interface above
   wan_interface: eth0
   
-  # LAN interface (for router mode)
-  lan_interface: eth1
+  # LAN interface (for router mode) - can be same as interface for single NIC
+  lan_interface: eth0
   
   # Protected ports (apply DDoS protection)
   protected_ports:
