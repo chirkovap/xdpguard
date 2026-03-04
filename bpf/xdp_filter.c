@@ -1,5 +1,5 @@
 // XDPGuard - XDP/eBPF DDoS Filter Program
-// High-performance packet filtering at NIC driver level
+// High-performance packet filtering at NIC driver level with DYNAMIC configuration
 
 #include <linux/bpf.h>
 #include <linux/if_ether.h>
@@ -7,13 +7,30 @@
 #include <linux/in.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
+#include <linux/icmp.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
 #define MAX_BLACKLIST_ENTRIES 10000
+#define MAX_WHITELIST_ENTRIES 1000
 #define MAX_RATELIMIT_ENTRIES 65536
 
+// Configuration keys for config_map
+#define CFG_SYN_RATE 0
+#define CFG_UDP_RATE 1
+#define CFG_ICMP_RATE 2
+#define CFG_ENABLED 3
+
 // BPF Maps
+
+// Configuration map - stores rate limits (updated by Python from config.yaml)
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __type(key, __u32);
+    __type(value, __u64);
+    __uint(max_entries, 10);
+} config_map SEC(".maps");
+
 // IP Blacklist map
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
@@ -22,11 +39,24 @@ struct {
     __uint(max_entries, MAX_BLACKLIST_ENTRIES);
 } blacklist SEC(".maps");
 
-// Rate limiting map (tracks packet counts per IP)
+// IP Whitelist map (these IPs are never blocked)
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, __u32);      // IP address
+    __type(value, __u8);     // 1 = whitelisted
+    __uint(max_entries, MAX_WHITELIST_ENTRIES);
+} whitelist SEC(".maps");
+
+// Rate limiting map with timestamps
+struct rate_info {
+    __u64 pkt_count;
+    __u64 last_reset;
+};
+
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
-    __type(key, __u32);      // IP address
-    __type(value, __u64);    // packet count
+    __type(key, __u32);              // IP address
+    __type(value, struct rate_info); // packet count + timestamp
     __uint(max_entries, MAX_RATELIMIT_ENTRIES);
 } rate_limit SEC(".maps");
 
@@ -45,6 +75,12 @@ struct {
     __type(value, struct stats);
     __uint(max_entries, 1);
 } stats_map SEC(".maps");
+
+// Helper: Get configuration value
+static __always_inline __u64 get_config(__u32 key, __u64 default_val) {
+    __u64 *val = bpf_map_lookup_elem(&config_map, &key);
+    return val ? *val : default_val;
+}
 
 // Helper function to parse packet headers
 static __always_inline int parse_packet(struct xdp_md *ctx, 
@@ -89,13 +125,58 @@ static __always_inline void update_stats(__u32 action, __u64 bytes) {
     }
 }
 
+// Check rate limit with time-based window (1 second)
+static __always_inline int check_rate_limit(__u32 src_ip, __u8 protocol) {
+    struct rate_info *rate = bpf_map_lookup_elem(&rate_limit, &src_ip);
+    __u64 now = bpf_ktime_get_ns();
+    __u64 one_sec_ns = 1000000000ULL; // 1 second in nanoseconds
+    
+    // Get rate limit from config based on protocol
+    __u64 rate_limit_pps;
+    if (protocol == IPPROTO_TCP) {
+        rate_limit_pps = get_config(CFG_SYN_RATE, 1000); // Default 1000 pps
+    } else if (protocol == IPPROTO_UDP) {
+        rate_limit_pps = get_config(CFG_UDP_RATE, 500);  // Default 500 pps
+    } else if (protocol == IPPROTO_ICMP) {
+        rate_limit_pps = get_config(CFG_ICMP_RATE, 100); // Default 100 pps
+    } else {
+        return 0; // Pass other protocols
+    }
+    
+    if (rate) {
+        // Check if window expired (1 second passed)
+        if (now - rate->last_reset > one_sec_ns) {
+            // Reset counter for new window
+            rate->pkt_count = 1;
+            rate->last_reset = now;
+        } else {
+            // Increment counter
+            rate->pkt_count++;
+            
+            // Check if rate limit exceeded
+            if (rate->pkt_count > rate_limit_pps) {
+                return 1; // Rate limit exceeded - drop
+            }
+        }
+    } else {
+        // First packet from this IP - initialize
+        struct rate_info new_rate = {
+            .pkt_count = 1,
+            .last_reset = now
+        };
+        bpf_map_update_elem(&rate_limit, &src_ip, &new_rate, BPF_ANY);
+    }
+    
+    return 0; // Rate limit OK
+}
+
 SEC("xdp")
 int xdp_filter_func(struct xdp_md *ctx) {
     struct ethhdr *eth;
     struct iphdr *ip;
     __u32 src_ip;
+    __u8 *whitelisted;
     __u8 *blocked;
-    __u64 *pkt_count;
     __u32 action = XDP_PASS;
     __u64 bytes = (__u64)(ctx->data_end - ctx->data);
 
@@ -107,6 +188,20 @@ int xdp_filter_func(struct xdp_md *ctx) {
 
     src_ip = ip->saddr;
 
+    // Check if protection is enabled
+    __u64 enabled = get_config(CFG_ENABLED, 1);
+    if (!enabled) {
+        update_stats(XDP_PASS, bytes);
+        return XDP_PASS;
+    }
+
+    // Check whitelist first - whitelisted IPs bypass all checks
+    whitelisted = bpf_map_lookup_elem(&whitelist, &src_ip);
+    if (whitelisted && *whitelisted) {
+        update_stats(XDP_PASS, bytes);
+        return XDP_PASS;
+    }
+
     // Check IP blacklist
     blocked = bpf_map_lookup_elem(&blacklist, &src_ip);
     if (blocked && *blocked) {
@@ -115,30 +210,12 @@ int xdp_filter_func(struct xdp_md *ctx) {
         return XDP_DROP;
     }
 
-    // Rate limiting check
-    pkt_count = bpf_map_lookup_elem(&rate_limit, &src_ip);
-    if (pkt_count) {
-        // Increment packet count
-        __sync_fetch_and_add(pkt_count, 1);
-        
-        // Simple threshold-based rate limiting
-        // In production, this should use time-based windows
-        if (*pkt_count > 1000) {  // 1000 packets threshold
-            action = XDP_DROP;
-            update_stats(action, bytes);
-            return XDP_DROP;
-        }
-    } else {
-        // First packet from this IP - initialize counter
-        __u64 init_count = 1;
-        bpf_map_update_elem(&rate_limit, &src_ip, &init_count, BPF_ANY);
+    // Rate limiting check (protocol-specific)
+    if (check_rate_limit(src_ip, ip->protocol)) {
+        action = XDP_DROP;
+        update_stats(action, bytes);
+        return XDP_DROP;
     }
-
-    // Additional protocol-specific filtering can be added here
-    // For example:
-    // - TCP SYN flood detection
-    // - UDP flood detection
-    // - ICMP flood detection
 
     // Packet passes all checks
     update_stats(action, bytes);
