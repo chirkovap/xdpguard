@@ -860,10 +860,10 @@
         let currentEventData = null;
         let currentPacketData = null;
         
-        // Auto-refresh
-        setInterval(refreshStats, 2000);
-        setInterval(refreshEvents, 3000);
-        setInterval(refreshPackets, 2000);
+        // Auto-refresh with optimized intervals (10-15 seconds instead of 2-3)
+        setInterval(refreshStats, 10000);  // 10 seconds
+        setInterval(refreshEvents, 15000); // 15 seconds  
+        setInterval(refreshPackets, 10000); // 10 seconds
         
         // Initial load
         refreshStats();
