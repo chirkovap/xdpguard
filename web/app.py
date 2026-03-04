@@ -40,6 +40,9 @@ def create_app(config, xdp_manager):
             stats = xdp_manager.get_statistics()
             blocked_ips = xdp_manager.get_blocked_ips()
             
+            # Проверить на атаки при каждом запросе статуса
+            xdp_manager.check_for_attacks()
+            
             return jsonify({
                 'status': 'running',
                 'protection_enabled': config.get('protection.enabled', True),
@@ -119,7 +122,7 @@ def create_app(config, xdp_manager):
             logger.error(f"Failed to clear rate limits: {e}")
             return jsonify({'success': False, 'error': str(e)}), 500
 
-    # ========== NEW EVENT LOGGING ENDPOINTS ==========
+    # ========== EVENT LOGGING ENDPOINTS ==========
     
     @app.route('/api/events')
     def api_events():
@@ -137,6 +140,22 @@ def create_app(config, xdp_manager):
             })
         except Exception as e:
             logger.error(f"Failed to get events: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/events/raw')
+    def api_events_raw():
+        """Получить события в сыром формате (как они хранятся)"""
+        try:
+            limit = int(request.args.get('limit', 100))
+            events = xdp_manager.get_events_raw(limit)
+            
+            return jsonify({
+                'events': events,
+                'count': len(events),
+                'format': 'raw'
+            })
+        except Exception as e:
+            logger.error(f"Failed to get raw events: {e}")
             return jsonify({'error': str(e)}), 500
 
     @app.route('/api/events/stats')
@@ -162,7 +181,7 @@ def create_app(config, xdp_manager):
             logger.error(f"Failed to clear events: {e}")
             return jsonify({'success': False, 'error': str(e)}), 500
     
-    # ========== END NEW ENDPOINTS ==========
+    # ========== END EVENT ENDPOINTS ==========
 
     @app.route('/api/config', methods=['GET', 'POST'])
     def api_config():
