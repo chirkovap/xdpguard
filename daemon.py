@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from python.config import Config
 from python.xdpmanager import XDPManager
+from python.attack_detector import AttackDetector
 from web.app import create_app
 
 # Setup logging
@@ -37,6 +38,7 @@ class XDPGuardDaemon:
     def __init__(self, config_path="/etc/xdpguard/config.yaml"):
         self.config = Config(config_path)
         self.xdp_manager = XDPManager(self.config.config)
+        self.attack_detector = AttackDetector(self.xdp_manager, self.config.config)
         self.running = True
         
         # Setup signal handlers
@@ -59,6 +61,13 @@ class XDPGuardDaemon:
         except Exception as e:
             logger.error(f"Failed to initialize XDP: {e}")
             sys.exit(1)
+        
+        # Start attack detector
+        try:
+            self.attack_detector.start()
+            logger.info("✓ Attack detector started")
+        except Exception as e:
+            logger.error(f"Failed to start attack detector: {e}")
         
         # Start web interface
         web_host = self.config.get('web.host', '0.0.0.0')
@@ -89,6 +98,13 @@ class XDPGuardDaemon:
         logger.info("="*60)
         
         self.running = False
+        
+        # Stop attack detector
+        try:
+            self.attack_detector.stop()
+            logger.info("✓ Attack detector stopped")
+        except Exception as e:
+            logger.error(f"Error stopping attack detector: {e}")
         
         # Unload XDP program (optional - you may want to keep protection active)
         try:
