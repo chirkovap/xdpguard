@@ -50,6 +50,10 @@
         }
         .event-row {
             font-size: 0.9rem;
+            cursor: pointer;
+        }
+        .event-row:hover {
+            background-color: #f0f0f0 !important;
         }
         .event-row.severity-CRITICAL {
             background-color: #f8d7da;
@@ -70,6 +74,35 @@
         }
         .tab-content {
             padding-top: 20px;
+        }
+        .json-viewer {
+            background-color: #f5f5f5;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .json-key {
+            color: #881391;
+            font-weight: bold;
+        }
+        .json-string {
+            color: #1A1AA6;
+        }
+        .json-number {
+            color: #164;
+        }
+        .clickable-icon {
+            cursor: pointer;
+            color: #007bff;
+        }
+        .clickable-icon:hover {
+            color: #0056b3;
         }
     </style>
 </head>
@@ -261,6 +294,12 @@
                             <button type="button" class="btn btn-outline-success" onclick="filterEvents('UNBLOCK')">
                                 <i class="fas fa-check"></i> UNBLOCK
                             </button>
+                            <button type="button" class="btn btn-outline-warning" onclick="filterEvents('ATTACK')">
+                                <i class="fas fa-exclamation-triangle"></i> ATTACK
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" onclick="filterEvents('DROP')">
+                                <i class="fas fa-times"></i> DROP
+                            </button>
                             <button type="button" class="btn btn-outline-info" onclick="filterEvents('SYSTEM')">
                                 <i class="fas fa-cog"></i> SYSTEM
                             </button>
@@ -297,16 +336,22 @@
                         <div class="card">
                             <div class="card-body">
                                 <div class="row">
-                                    <div class="col-md-3">
-                                        <strong>Всего событий:</strong> <span id="total-events">0</span>
+                                    <div class="col-md-2">
+                                        <strong>Всего:</strong> <span id="total-events">0</span>
                                     </div>
-                                    <div class="col-md-3">
-                                        <strong>За последний час:</strong> <span id="events-last-hour">0</span>
+                                    <div class="col-md-2">
+                                        <strong>За час:</strong> <span id="events-last-hour">0</span>
                                     </div>
-                                    <div class="col-md-3">
+                                    <div class="col-md-2">
+                                        <strong>ATTACK:</strong> <span class="text-danger" id="attack-count">0</span>
+                                    </div>
+                                    <div class="col-md-2">
+                                        <strong>DROP:</strong> <span class="text-warning" id="drop-count">0</span>
+                                    </div>
+                                    <div class="col-md-2">
                                         <strong>CRITICAL:</strong> <span class="text-danger" id="critical-count">0</span>
                                     </div>
-                                    <div class="col-md-3">
+                                    <div class="col-md-2">
                                         <strong>WARNING:</strong> <span class="text-warning" id="warning-count">0</span>
                                     </div>
                                 </div>
@@ -331,16 +376,38 @@
                                             <th style="width: 100px">Уровень</th>
                                             <th style="width: 130px">IP</th>
                                             <th>Сообщение</th>
+                                            <th style="width: 50px"><i class="fas fa-info-circle"></i></th>
                                         </tr>
                                     </thead>
                                     <tbody id="events-table-body">
                                         <tr>
-                                            <td colspan="5" class="text-center">Загрузка...</td>
+                                            <td colspan="6" class="text-center">Загрузка...</td>
                                         </tr>
                                     </tbody>
                                 </table>
                             </div>
                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Event Details Modal -->
+    <div class="modal fade" id="eventDetailsModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-info-circle"></i> Детали события</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <h6>Полные данные события (JSON):</h6>
+                    <div class="json-viewer" id="event-json"></div>
+                    <div class="mt-3">
+                        <button class="btn btn-sm btn-secondary" onclick="copyEventJSON()">
+                            <i class="fas fa-copy"></i> Скопировать JSON
+                        </button>
                     </div>
                 </div>
             </div>
@@ -355,6 +422,7 @@
         // Global filters
         let currentEventTypeFilter = null;
         let currentSeverityFilter = null;
+        let currentEventData = null;
         
         // Auto-refresh every 2 seconds
         setInterval(refreshStats, 2000);
@@ -369,7 +437,6 @@
             fetch('/api/status')
                 .then(res => res.json())
                 .then(data => {
-                    // Update statistics
                     document.getElementById('packets-total').textContent = 
                         (data.stats.packets_total || 0).toLocaleString();
                     document.getElementById('packets-dropped').textContent = 
@@ -379,11 +446,9 @@
                     document.getElementById('blocked-count').textContent = 
                         data.blocked_count || 0;
                     
-                    // Calculate throughput (bytes to Mbps)
                     const mbps = ((data.stats.bytes_total || 0) * 8 / 1000000).toFixed(2);
                     document.getElementById('throughput').textContent = mbps + ' Mbps';
                     
-                    // Calculate drop rate
                     const total = data.stats.packets_total || 1;
                     const dropped = data.stats.packets_dropped || 0;
                     const dropRate = ((dropped / total) * 100).toFixed(2);
@@ -437,31 +502,36 @@
                     const tbody = document.getElementById('events-table-body');
                     tbody.innerHTML = '';
                     
-                    // Update event count badge
                     document.getElementById('event-count-badge').textContent = data.count || 0;
                     
                     if (!data.events || data.events.length === 0) {
-                        tbody.innerHTML = '<tr><td colspan="5" class="text-center">Событий нет</td></tr>';
+                        tbody.innerHTML = '<tr><td colspan="6" class="text-center">Событий нет</td></tr>';
                         return;
                     }
                     
-                    data.events.forEach(event => {
+                    data.events.forEach((event, index) => {
                         const timestamp = new Date(event.timestamp).toLocaleString('ru-RU');
                         const severityClass = `severity-${event.severity}`;
                         const severityBadge = getSeverityBadge(event.severity);
                         const typeBadge = getTypeBadge(event.type);
                         
                         const row = `
-                            <tr class="event-row ${severityClass}">
+                            <tr class="event-row ${severityClass}" onclick="showEventDetails(${index})" data-event='${JSON.stringify(event).replace(/'/g, "&apos;")}'>
                                 <td class="event-timestamp">${timestamp}</td>
                                 <td>${typeBadge}</td>
                                 <td>${severityBadge}</td>
                                 <td><code>${event.ip}</code></td>
                                 <td>${event.message}</td>
+                                <td class="text-center">
+                                    <i class="fas fa-eye clickable-icon"></i>
+                                </td>
                             </tr>
                         `;
                         tbody.innerHTML += row;
                     });
+                    
+                    // Сохраняем данные для модального окна
+                    currentEventData = data.events;
                 })
                 .catch(err => console.error('Failed to load events:', err));
             
@@ -471,10 +541,46 @@
                 .then(stats => {
                     document.getElementById('total-events').textContent = stats.total || 0;
                     document.getElementById('events-last-hour').textContent = stats.recent_count?.last_hour || 0;
+                    document.getElementById('attack-count').textContent = stats.by_type?.ATTACK || 0;
+                    document.getElementById('drop-count').textContent = stats.by_type?.DROP || 0;
                     document.getElementById('critical-count').textContent = stats.by_severity?.CRITICAL || 0;
                     document.getElementById('warning-count').textContent = stats.by_severity?.WARNING || 0;
                 })
                 .catch(err => console.error('Failed to load event stats:', err));
+        }
+
+        function showEventDetails(index) {
+            if (!currentEventData || !currentEventData[index]) {
+                alert('Данные события не найдены');
+                return;
+            }
+            
+            const event = currentEventData[index];
+            const jsonFormatted = JSON.stringify(event, null, 2);
+            
+            // Подсветка синтаксиса JSON
+            const highlighted = syntaxHighlight(jsonFormatted);
+            document.getElementById('event-json').innerHTML = highlighted;
+            
+            // Открываем модальное окно
+            const modal = new bootstrap.Modal(document.getElementById('eventDetailsModal'));
+            modal.show();
+        }
+
+        function syntaxHighlight(json) {
+            json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            return json.replace(/"(\w+)":/g, '<span class="json-key">"$1":</span>')
+                       .replace(/: "([^"]*)"/g, ': <span class="json-string">"$1"</span>')
+                       .replace(/: (\d+)/g, ': <span class="json-number">$1</span>');
+        }
+
+        function copyEventJSON() {
+            const jsonText = document.getElementById('event-json').innerText;
+            navigator.clipboard.writeText(jsonText).then(() => {
+                alert('Скопировано в буфер обмена!');
+            }).catch(err => {
+                console.error('Ошибка копирования:', err);
+            });
         }
 
         function getSeverityBadge(severity) {
