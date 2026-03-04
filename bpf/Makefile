@@ -1,63 +1,45 @@
 # XDPGuard BPF Makefile
-# Compiles XDP programs with proper BTF support
+# Compiles XDP program with proper flags
 
-CLANG ?= clang
-LLC ?= llc
+CLANG := clang
+LLC := llc
 ARCH := $(shell uname -m | sed 's/x86_64/x86/' | sed 's/aarch64/arm64/')
 
-# BPF compilation flags with BTF support
-BPF_CFLAGS := -g -O2 -Wall \
-	-target bpf \
-	-D__TARGET_ARCH_$(ARCH) \
-	-I/usr/include \
-	-I/usr/include/$(shell uname -m)-linux-gnu
+# Compiler flags
+CFLAGS := -O2 -g -Wall -Werror
+CFLAGS += -D__KERNEL__ -D__BPF_TRACING__
+CFLAGS += -target bpf
+CFLAGS += -I/usr/include/$(shell uname -m)-linux-gnu
 
-# Targets
-TARGET := xdp_filter.o
-SOURCE := xdp_filter.c
+# Source and output
+SRC := xdp_filter.c
+OBJ := xdp_filter.o
+
+# Installation path
 INSTALL_DIR := /usr/lib/xdpguard
 
-.PHONY: all clean install
+.PHONY: all clean install uninstall
 
-all: $(TARGET)
+all: $(OBJ)
 	@echo "✓ XDP program compiled successfully"
-	@echo "  Output: $(TARGET)"
-	@echo "  Size: $$(stat -c%s $(TARGET)) bytes"
 
-$(TARGET): $(SOURCE)
-	@echo "Compiling XDP program..."
-	$(CLANG) $(BPF_CFLAGS) -c $< -o $@
-	@echo "✓ Compilation complete"
+$(OBJ): $(SRC)
+	$(CLANG) $(CFLAGS) -c $(SRC) -o $(OBJ)
 
-install: $(TARGET)
-	@echo "Installing XDP program..."
-	mkdir -p $(INSTALL_DIR)
-	cp $(TARGET) $(INSTALL_DIR)/
-	chmod 644 $(INSTALL_DIR)/$(TARGET)
-	@echo "✓ XDP program installed to $(INSTALL_DIR)/$(TARGET)"
+install: $(OBJ)
+	@echo "Installing XDP program to $(INSTALL_DIR)..."
+	@mkdir -p $(INSTALL_DIR)
+	@install -m 0644 $(OBJ) $(INSTALL_DIR)/
+	@echo "✓ XDP program installed to $(INSTALL_DIR)/$(OBJ)"
 
 clean:
-	@echo "Cleaning build artifacts..."
-	rm -f *.o *.ll
-	@echo "✓ Clean complete"
+	@rm -f $(OBJ)
+	@echo "✓ Cleaned build artifacts"
 
 uninstall:
-	@echo "Uninstalling XDP program..."
-	rm -f $(INSTALL_DIR)/$(TARGET)
-	@echo "✓ Uninstall complete"
+	@rm -f $(INSTALL_DIR)/$(OBJ)
+	@echo "✓ XDP program uninstalled"
 
-# Helper targets
-check:
-	@echo "Checking dependencies..."
-	@which $(CLANG) > /dev/null || (echo "ERROR: clang not found" && exit 1)
-	@echo "✓ clang found: $$($(CLANG) --version | head -n1)"
-	@test -f $(SOURCE) || (echo "ERROR: $(SOURCE) not found" && exit 1)
-	@echo "✓ Source file: $(SOURCE)"
-
-info:
-	@echo "XDPGuard BPF Makefile"
-	@echo "  Compiler: $(CLANG)"
-	@echo "  Architecture: $(ARCH)"
-	@echo "  Target: $(TARGET)"
-	@echo "  Source: $(SOURCE)"
-	@echo "  Install dir: $(INSTALL_DIR)"
+# Build and install in one step
+setup: all install
+	@echo "✓ Build and install complete"
