@@ -46,21 +46,22 @@ echo ""
 
 # Step 1: Install dependencies
 echo -e "${GREEN}[1/8] Installing dependencies...${NC}"
-apt-get update -qq
-apt-get install -y -qq \
-    clang \
-    llvm \
-    libbpf-dev \
-    linux-headers-$(uname -r) \
-    build-essential \
-    python3 \
-    python3-pip \
-    python3-yaml \
-    python3-flask \
-    iproute2 \
-    bpftool \
-    git \
-    curl > /dev/null 2>&1
+echo "This may take a few minutes..."
+
+# Update package list
+apt-get update -qq 2>&1 | grep -v "^Get:" | grep -v "^Fetched" || true
+
+# Install packages one by one with progress
+PACKAGES="clang llvm libbpf-dev linux-headers-$(uname -r) build-essential python3 python3-pip python3-yaml python3-flask iproute2 bpftool git curl"
+
+for pkg in $PACKAGES; do
+    echo -n "  Installing $pkg... "
+    if apt-get install -y -qq $pkg 2>&1 | grep -q "is already"; then
+        echo "[already installed]"
+    else
+        echo "[done]"
+    fi
+done
 
 echo -e "${GREEN}✓ Dependencies installed${NC}"
 
@@ -84,11 +85,12 @@ fi
 
 mkdir -p build
 
+echo "  Running clang compiler..."
 clang -O2 -g -target bpf \
     -D__BPF_TRACING__ \
     -I/usr/include/$(uname -m)-linux-gnu \
     -c bpf/xdp_filter.c \
-    -o build/xdp_filter.o
+    -o build/xdp_filter.o 2>&1 | head -20
 
 if [ ! -f "build/xdp_filter.o" ]; then
     echo -e "${RED}ERROR: XDP compilation failed${NC}"
@@ -106,13 +108,13 @@ mkdir -p /usr/lib/xdpguard
 mkdir -p /etc/xdpguard
 mkdir -p /var/log
 
-# Copy Python files
+echo "  Copying Python files..."
 cp -r python /opt/xdpguard/
 cp -r web /opt/xdpguard/
 cp daemon.py /opt/xdpguard/
 cp cli.py /opt/xdpguard/
 
-# Copy compiled XDP program
+echo "  Copying XDP program..."
 cp build/xdp_filter.o /usr/lib/xdpguard/
 
 echo -e "${GREEN}✓ Files installed to /opt/xdpguard${NC}"
@@ -193,8 +195,9 @@ else
     systemctl start xdpguard
 fi
 
-# Wait a moment for service to start
-sleep 2
+# Wait for service to start
+echo "  Waiting for service to initialize..."
+sleep 5
 
 # Check service status
 if systemctl is-active --quiet xdpguard; then
