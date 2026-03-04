@@ -119,6 +119,51 @@ def create_app(config, xdp_manager):
             logger.error(f"Failed to clear rate limits: {e}")
             return jsonify({'success': False, 'error': str(e)}), 500
 
+    # ========== NEW EVENT LOGGING ENDPOINTS ==========
+    
+    @app.route('/api/events')
+    def api_events():
+        """Получить события безопасности"""
+        try:
+            limit = int(request.args.get('limit', 100))
+            event_type = request.args.get('type', None)
+            severity = request.args.get('severity', None)
+            
+            events = xdp_manager.get_events(limit, event_type, severity)
+            
+            return jsonify({
+                'events': events,
+                'count': len(events)
+            })
+        except Exception as e:
+            logger.error(f"Failed to get events: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/events/stats')
+    def api_event_stats():
+        """Статистика событий"""
+        try:
+            stats = xdp_manager.get_event_stats()
+            return jsonify(stats)
+        except Exception as e:
+            logger.error(f"Failed to get event stats: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/events/clear', methods=['POST'])
+    def api_clear_events():
+        """Очистить логи событий"""
+        try:
+            count = xdp_manager.event_logger.clear()
+            return jsonify({
+                'success': True,
+                'message': f'Логи очищены ({count} событий удалено)'
+            })
+        except Exception as e:
+            logger.error(f"Failed to clear events: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+    
+    # ========== END NEW ENDPOINTS ==========
+
     @app.route('/api/config', methods=['GET', 'POST'])
     def api_config():
         """Get or update configuration"""
