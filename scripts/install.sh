@@ -48,7 +48,7 @@ echo ""
 echo -e "${GREEN}[1/8] Installing dependencies...${NC}"
 echo "This may take a few minutes..."
 
-# Update package list
+# Update package list quietly
 apt-get update -qq 2>&1 | grep -v "^Get:" | grep -v "^Fetched" || true
 
 # Install packages one by one with progress
@@ -56,10 +56,10 @@ PACKAGES="clang llvm libbpf-dev linux-headers-$(uname -r) build-essential python
 
 for pkg in $PACKAGES; do
     echo -n "  Installing $pkg... "
-    if apt-get install -y -qq $pkg 2>&1 | grep -q "is already"; then
+    if dpkg -l | grep -q "^ii  $pkg"; then
         echo "[already installed]"
     else
-        echo "[done]"
+        apt-get install -y -qq $pkg > /dev/null 2>&1 && echo "[done]" || echo "[failed]"
     fi
 done
 
@@ -86,14 +86,17 @@ fi
 mkdir -p build
 
 echo "  Running clang compiler..."
+# Fixed compilation flags - no 32-bit stubs needed
 clang -O2 -g -target bpf \
+    -D__TARGET_ARCH_x86 \
     -D__BPF_TRACING__ \
-    -I/usr/include/$(uname -m)-linux-gnu \
+    -I/usr/include/x86_64-linux-gnu \
     -c bpf/xdp_filter.c \
     -o build/xdp_filter.o 2>&1 | head -20
 
 if [ ! -f "build/xdp_filter.o" ]; then
     echo -e "${RED}ERROR: XDP compilation failed${NC}"
+    echo -e "${YELLOW}Try installing: sudo apt-get install gcc-multilib${NC}"
     exit 1
 fi
 
@@ -217,9 +220,12 @@ echo -e "  - Status: systemctl status xdpguard"
 echo -e "  - Logs: journalctl -u xdpguard -f"
 echo -e "  - Config: /etc/xdpguard/config.yaml"
 echo ""
+echo -e "${YELLOW}Verify ConfigSync is working:${NC}"
+echo -e "  sudo journalctl -u xdpguard -n 50 | grep -i 'config\|sync'"
+echo ""
 echo -e "${YELLOW}Important:${NC}"
-echo -e "  1. Configure rate limits in /etc/xdpguard/config.yaml"
-echo -e "  2. Add your management IPs to whitelist_ips"
-echo -e "  3. Restart service: systemctl restart xdpguard"
+echo -e "  1. Add your management IPs to whitelist_ips in config"
+echo -e "  2. Adjust rate limits if needed (default: 1000 SYN/sec)"
+echo -e "  3. Restart after config changes: systemctl restart xdpguard"
 echo ""
 echo -e "${GREEN}Happy protecting! 🛡️${NC}"
