@@ -38,14 +38,14 @@ class XDPManager:
         max_packets = config.get('logging.max_packets', 10000)
         self.packet_logger = PacketLogger(max_packets=max_packets)
         
-        # Initialize packet capture
+        # Initialize packet capture if enabled
         self.packet_capture = None
         if config.get('logging.enable_packet_logging', False):
             self.packet_capture = PacketCapture(
                 packet_logger=self.packet_logger,
                 interface=self.interface
             )
-            logger.info("PacketCapture будет запущен после загрузки XDP программы")
+            logger.info("PacketCapture инициализирован, будет запущен после загрузки XDP")
         
         # Track previous stats for delta calculations
         self.prev_stats = {
@@ -106,6 +106,13 @@ class XDPManager:
                         )
                     except Exception as e:
                         logger.warning(f"Failed to start packet capture: {e}")
+                        self.event_logger.log_event(
+                            event_type='SYSTEM',
+                            severity='WARNING',
+                            ip_address='N/A',
+                            message=f'Не удалось запустить захват пакетов: {str(e)}',
+                            details={'error': str(e)}
+                        )
                 
                 return True
             else:
